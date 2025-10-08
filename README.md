@@ -507,11 +507,11 @@ SessionData session = new SessionData("session-id", "标题", "model");
 
 ## 许可证
 
-本项目采用 MIT 许可证 - 查看 [LICENSE](https://github.com/ByteCraftTeam/ByteCraft/blob/main/LICENSE) 文件了解详情。
+本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。
 
 ## 贡献
 
-欢迎贡献代码！请查看 [贡献指南](https://github.com/ByteCraftTeam/ByteCraft/blob/main/CONTRIBUTING.md) 了解详情。
+欢迎贡献代码！请查看 [贡献指南](CONTRIBUTING.md) 了解详情。
 
 ## 联系方式
 
