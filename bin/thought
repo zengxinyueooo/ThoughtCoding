@@ -1,0 +1,19 @@
+#!/bin/bash
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+JAR_PATH="$SCRIPT_DIR/../target/thoughtcoding.jar"
+
+# Check if Java is available
+if ! command -v java &> /dev/null; then
+    echo "❌ Java is not installed or not in PATH"
+    exit 1
+fi
+
+# Check Java version
+JAVA_VERSION=$(java -version 2>&1 | head -1 | cut -d'"' -f2 | cut -d'.' -f1)
+if [ "$JAVA_VERSION" -lt "17" ]; then
+    echo "❌ Java 17 or higher is required. Current version: $JAVA_VERSION"
+    exit 1
+fi
+
+# Run the application
+java -jar "$JAR_PATH" "$@"

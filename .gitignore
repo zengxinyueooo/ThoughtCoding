@@ -1,0 +1,22 @@
+# 编译输出
+target/
+bin/  # 注意：这里不要忽略，因为包含启动脚本
+
+# 日志文件
+*.log
+logs/
+
+# IDE 文件
+.idea/
+*.iml
+*.iws
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 会话数据（用户数据，不提交）
+sessions/
+
+# 本地配置（不提交）
+config.yaml
