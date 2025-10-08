@@ -78,6 +78,7 @@ ThoughtCoding/
 ### `src/main/java/com/thoughtcoding/ThoughtCodingCLI.java` - CLI 入口
 
 **功能**: 命令行界面入口，处理应用启动
+
 **特性**:
 
 - 初始化应用上下文和配置
@@ -97,6 +98,7 @@ ThoughtCoding/
 - **功能**：配置管理命令类
 
 `ThoughtCodingCommand.java`
+
 **特性**:
 
 - 支持交互式模式 (`-i, --interactive`)
@@ -126,6 +128,7 @@ ThoughtCoding/
 ### `src/main/java/com/thoughtcoding/model/` - 数据模型
 
 **功能**: 集中管理所有数据模型和类型定义
+
 **主要类**:
 
 - `ChatMessage.java` - 聊天消息模型
@@ -158,6 +161,7 @@ ThoughtCoding/
 ### `src/main/java/com/thoughtcoding/service/` - 服务层
 
 **功能**: 业务逻辑和服务实现
+
 **主要服务**:
 
 - `LangChainService.java` - AI 服务核心实现
@@ -188,6 +192,7 @@ ThoughtCoding/
 ### `src/main/java/com/thoughtcoding/ui/` - 用户界面
 
 **功能**: 终端用户界面管理
+
 **主要组件**:
 
 `ThoughtCodingUI.java`
