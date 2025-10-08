@@ -505,6 +505,10 @@ SessionData session = new SessionData("session-id", "标题", "model");
 ./bin/thought -S <session-id>
 ```
 
+## 🎥 项目演示
+
+[![观看演示](https://img.shields.io/badge/🎬_观看视频-FF6B6B?style=for-the-badge)](https://github.com/zengxinyueooo/ThoughtCoding/项目演示.mp4)
+
 ## 🤝 协作指南
 
 ### 代码规范
