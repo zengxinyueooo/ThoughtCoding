@@ -328,11 +328,18 @@ git clone https://github.com/zengxinyueooo/ThoughtCoding.git
 
 ### 配置 API
 
-复制配置文件示例并填入您的 API 密钥：
+#### **Linux/macOS**
 
 ```
 cp config.yaml.example config.yaml
-# 编辑 config.yaml，填入您的 API 密钥
+# 编辑 config.yaml，填入您的 DeepSeek API 密钥
+```
+
+#### **Windows**
+
+```
+copy config.yaml.example config.yaml
+# 编辑 config.yaml，填入您的 DeepSeek API 密钥
 ```
 
 ### 构建项目
@@ -346,6 +353,8 @@ mvn clean package
 ```
 cd ThoughtCoding
 ```
+
+#### **Linux/macOS**
 
 ```
 # 交互模式
@@ -364,7 +373,29 @@ cd ThoughtCoding
 ./bin/thought -m deepseek-chat
 
 # 查看帮助
-./bin/thought help 
+./bin/thought help
+```
+
+#### **Windows**
+
+```
+# 交互模式
+.\bin\thought.bat
+
+# 继续上次对话
+.\bin\thought.bat -c
+
+# 指定会话
+.\bin\thought.bat -S <session-id>
+
+# 单次对话
+.\bin\thought.bat -p "帮我写一个Java类"
+
+# 指定模型
+.\bin\thought.bat -m deepseek-chat
+
+# 查看帮助
+.\bin\thought.bat help
 ```
 
 ## 🔧 开发指南
