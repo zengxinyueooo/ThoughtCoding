@@ -27,19 +27,25 @@ public class MCPClient {
         this.serverName = serverName;
     }
 
-    public boolean connect(String command, List<String> args) {
+    public boolean connect(String fullCommand, List<String> args) {
         try {
-            log.info("启动MCP服务器: {} - {}", serverName, command);
-            log.info("参数列表: {}", args);
+            // 分割完整命令为命令和参数，并去除引号
+            String[] parts = fullCommand.split("\\s+");
+            String command = parts[0].replace("\"", "");  // 去除引号
 
             List<String> commandList = new ArrayList<>();
             commandList.add(command);
 
-            // 🔥 现在 serverConfig 是 List<String>，直接添加所有参数
+            // 添加命令的其他部分作为参数，并去除引号
+            for (int i = 1; i < parts.length; i++) {
+                String arg = parts[i].replace("\"", "");  // 去除引号
+                commandList.add(arg);
+            }
+
+            // 添加额外的参数
             if (args != null && !args.isEmpty()) {
                 for (String arg : args) {
-                    log.info("添加参数: {}", arg);
-                    commandList.add(arg);
+                    commandList.add(arg.replace("\"", ""));  // 去除引号
                 }
             }
 
