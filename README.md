@@ -14,8 +14,11 @@
 
 - **智能对话** - 基于多种 AI 模型的智能代码助手
 - **流式输出** - 支持实时流式响应，提供更好的交互体验
-- **丰富工具** - 支持文件管理、代码执行、搜索等多种工具调用
-- **配置管理** - 灵活的 YAML 配置文件系统
+- **MCP 集成** - 内置 Model Context Protocol 支持，可连接丰富的工具生态系统
+- **工具扩展** - 通过 MCP 支持文件管理、数据库操作、搜索、GitHub 等 50+ 种工具
+- **动态工具发现** - 自动发现和注册 MCP 服务器的可用工具
+- **即插即用** - 无需重启即可动态连接新的 MCP 服务器
+- **配置管理** - 灵活的 YAML 配置文件系统，支持 MCP 服务器动态配置
 - **类型安全** - 完整的 Java 类型定义和封装
 - **终端 UI** - 基于 JLine + ANSI 颜色的现代化终端界面
 - **会话管理** - 会话保存、加载和会话继续功能
@@ -52,6 +55,17 @@ ThoughtCoding/
 │   │   │   └── FileManagerTool.java     # 文件管理
 │   │   └── 📁 search/                   # 搜索工具
 │   │       └── GrepSearchTool.java      # 文本搜索
+│   ├── 📁 mcp/                          # 🔌 MCP 功能模块
+│   │   ├── MCPService.java              # MCP 服务管理器
+│   │   ├── MCPClient.java               # MCP 客户端
+│   │   ├── MCPToolAdapter.java          # MCP 工具适配器
+│   │   ├── MCPToolManager.java          # MCP 工具管理器
+│   │   └── 📁 model/                    # MCP 数据模型
+│   │       ├── MCPRequest.java          # MCP 请求
+│   │       ├── MCPResponse.java         # MCP 响应
+│   │       ├── MCPError.java            # MCP 错误
+│   │       ├── MCPTool.java             # MCP 工具定义
+│   │       └── InputSchema.java         # 输入模式定义
 │   ├── 📁 ui/                           # 🎨 用户界面
 │   │   ├── ThoughtCodingUI.java         # UI 主控制器
 │   │   ├── TerminalManager.java         # 终端管理
@@ -195,6 +209,40 @@ ThoughtCoding/
 - **搜索工具**: 文件内容搜索 (`GrepSearchTool.java`)
 - **扩展性**: 容易添加新工具，基于 `BaseTool` 基类
 
+### `src/main/java/com/thoughtcoding/mcp/` - MCP 功能
+
+**功能**: 实现 Model Context Protocol 客户端功能，连接和管理外部 MCP 服务器
+
+`MCPService.java` - MCP 服务管理器
+
+- **功能**: MCP 服务的核心管理器
+
+`MCPClient.java` - MCP 客户端
+
+- **功能**: 单个 MCP 服务器的客户端实现
+
+`MCPToolManager.java` - MCP 工具管理器
+
+- **功能**: 管理所有 MCP 工具的统一入口
+
+`MCPToolAdapter.java` - MCP 工具适配器
+
+- **功能**: 将 MCP 工具适配为内部 BaseTool 格式
+
+**功能**: 定义 MCP 协议的数据结构和类型
+
+**`model/`**
+
+`MCPRequest.java` : MCP 请求
+
+`MCPResponse.java` : MCP 响应
+
+`MCPError.java` : MCP 错误
+
+`MCPTool.java` : MCP 工具定义
+
+`InputSchema.java` : 输入模式定义
+
 ### `src/main/java/com/thoughtcoding/ui/` - 用户界面
 
 **功能**: 终端用户界面管理
@@ -213,7 +261,7 @@ ThoughtCoding/
 
 - **功能**：ANSI 颜色工具类
 
-`component/`
+**`component/`**
 
 - **`ChatRenderer.java`**：聊天渲染器
 - **`InputHandler.java`**：输入处理器
@@ -296,6 +344,65 @@ performance:
   enableMonitoring: true
   logLevel: "INFO"
   cacheSize: 1000
+  
+# MCP 配置
+mcp:
+  enabled: true
+  autoDiscover: true
+  connectionTimeout: 30
+  servers:
+    #Filesystem
+    - name: "filesystem"
+      command: "D:\\Program Files\\node.js\\npx.cmd"
+      enabled: true
+      args:
+        - "@modelcontextprotocol/server-filesystem"
+        - "."
+
+    # PostgreSQL
+    - name: "postgres"
+      command: "npx"
+      enabled: false
+      args:
+        - "@modelcontextprotocol/server-postgres"
+        - "--connectionString"
+        - "postgresql://user:pass@localhost:5432/db"
+
+    # SQLite
+    - name: "sqlite"
+      command: "npx"
+      enabled: false
+      args:
+        - "@modelcontextprotocol/server-sqlite"
+        - "--database"
+        - "./data.db"
+
+    # MySQL
+    - name: "mysql"
+      command: "npx"
+      enabled: false
+      args:
+        - "@modelcontextprotocol/server-mysql"
+        - "--connectionString"
+        - "mysql://user:pass@localhost:3306/db"
+
+    # GitHub
+    - name: "github"
+      command: "npx"
+      enabled: false
+      args:
+        - "@modelcontextprotocol/server-github"
+        - "--token"
+        - "your_github_token_here"
+
+    #Weather
+    - name: "weather"
+      command: "npx"
+      enabled: false
+      args:
+        - "@coding-squirrel/mcp-weather-server"
+        - "--apiKey"
+        - "your_weather_api_key"
 ```
 
 ### 配置项说明
@@ -307,7 +414,9 @@ performance:
   - `streaming`: 是否启用流式输出
   - `maxTokens` - 单次请求最大 Token 数
   - `temperature` - 生成温度
+  
 - `defaultModel`: 默认使用的模型
+
 - tools : 工具配置
   - `fileManager`: 文件管理工具配置
   - `commandExec`: 命令执行工具配置
@@ -315,8 +424,25 @@ performance:
   - `search` - 搜索工具配置
 
 - `session` : 会话管理配置
+
 - `ui` : 界面显示配置
+
 - `performance` : 性能监控配置
+
+- `mcp` - MCP 功能配置
+
+  - `enabled` : 是否启用 MCP 功能模块
+  - `autoDiscover` : 是否自动发现和注册 MCP 服务器的工具
+  - `connectionTimeout` : MCP 服务器连接和初始化的超时时间
+
+  - `servers` : MCP 服务器列表配置
+
+    - `name` - 服务器名称
+    - `command` - 启动 MCP 服务器的命令或可执行文件路径
+
+    - `enabled` - 是否启用该服务器连接
+
+    - `args` - 传递给 MCP 服务器的命令行参数
 
 ## 🛠️ 快速开始
 
@@ -404,6 +530,28 @@ cd ThoughtCoding
 .\bin\thought.bat help
 ```
 
+### MCP 使用指南
+
+支持两种方式使用 MCP 工具
+
+#### 📁 配置文件方式 : 持久化配置，适合常用工具
+
+编辑 `config.yaml` 文件中的 `mcp` 部分，重启应用，验证工具加载，`/mcp list` 
+
+#### ⌨️ 终端命令方式 : 动态连接，适合临时工具
+
+启动应用后，命令连接需要的工具，
+
+```
+/mcp connect github npx @modelcontextprotocol/server-github
+/mcp connect postgres npx @modelcontextprotocol/server-postgres
+```
+
+```
+/mcp predefined          # 显示可用的预定义工具
+/mcp tools redis,docker  # 快捷连接预定义工具
+```
+
 ## 🔧 开发指南
 
 ### 在 `src/main/java/com/thoughtcoding/tools/` 目录下创建新工具
@@ -463,6 +611,28 @@ SessionData session = new SessionData("session-id", "标题", "model");
 - 配置与代码分离
 - 使用构建工具管理依赖和构建过程
 
+### **MCP 相关技术说明**
+
+#### **MCP 功能特性：**
+
+- ✅ **多服务器支持** - 可同时连接多个 MCP 服务器
+- ✅ **预定义工具** - 内置常用 MCP 工具快捷方式
+- ✅ **动态连接** - 运行时按需连接/断开 MCP 服务器
+- ✅ **协议兼容** - 支持标准 MCP 协议规范
+
+#### **支持的 MCP 工具：**
+
+- 🔧 **文件系统工具** - 本地文件操作
+- 🗃️ **数据库工具** - SQLite、PostgreSQL 查询
+- 🌐 **网络工具** - Web 搜索、API 调用
+- 📊 **计算工具** - 数学计算、数据处理
+
+#### **集成方式：**
+
+- ⚙️ **配置文件预连接** - 启动时自动连接常用工具
+- ⌨️ **命令行动态连接** - 交互模式下按需连接工具
+- 🔄 **混合模式** - 配置+命令灵活组合使用
+
 ## 📊 脚本说明
 
 - `./bin/thought` - Linux/macOS 启动脚本
@@ -511,6 +681,35 @@ SessionData session = new SessionData("session-id", "标题", "model");
 ./bin/thought -S <session-id>
 ```
 
+### 基础 MCP 工具使用
+
+```
+./bin/thought -p "读取config.yaml文件内容并分析配置结构"
+
+./bin/thought -p "连接SQLite数据库并查询所有用户表"
+
+./bin/thought -p "通过GitHub工具获取我的开源项目列表"
+```
+
+### MCP 服务器管理命令
+
+```
+# 查看已连接的 MCP 工具
+/mcp list
+
+# 显示可用的预定义工具
+/mcp predefined
+
+# 断开 MCP 服务器连接
+/mcp disconnect filesystem
+
+# 连接基础开发工具包
+/mcp tools filesystem,sqlite,git
+
+# 连接文件系统服务器
+/mcp connect filesystem npx @modelcontextprotocol/server-filesystem
+```
+
 ## 🤝 协作指南
 
 ### 代码规范
@@ -539,11 +738,13 @@ SessionData session = new SessionData("session-id", "标题", "model");
 - **语言**: Java 17+
 - **构建工具**: Maven
 - **AI 框架**: LangChain4j
+- **MCP 支持**: Model Context Protocol 客户端
 - **UI 框架**: JLine + 自定义 ANSI 终端 UI
 - **配置管理**: YAML + Jackson
 - **命令行**: Picocli
 - **工具调用**: LangChain Tools 集成
 - **JSON 处理**: Jackson Databind
+- **协议通信**: STDIO + 进程间通信
 
 ------
 
