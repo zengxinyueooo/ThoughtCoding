@@ -2,10 +2,15 @@ package com.thoughtcoding.config;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.Data;
 
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
+@Data
 public class AppConfig {
 
     @JsonProperty("models")
@@ -16,6 +21,10 @@ public class AppConfig {
 
     @JsonProperty("tools")
     private ToolsConfig tools = new ToolsConfig(); // Ensure tools is initialized
+
+    // 🔥 添加 MCP 配置字段
+    @JsonProperty("mcp")
+    private MCPConfig mcp = new MCPConfig();
 
     // Getters and Setters
     public Map<String, ModelConfig> getModels() {
@@ -45,6 +54,18 @@ public class AppConfig {
         this.tools = tools;
     }
 
+    // 🔥 添加 MCP 的 getter 和 setter
+    public MCPConfig getMcp() {
+        if (mcp == null) {
+            mcp = new MCPConfig();
+        }
+        return mcp;
+    }
+
+    public void setMcp(MCPConfig mcp) {
+        this.mcp = mcp;
+    }
+
     public String getDefaultModel() {
         // 如果配置了defaultModel，使用配置的值
         if (defaultModel != null && !defaultModel.trim().isEmpty()) {
@@ -59,8 +80,44 @@ public class AppConfig {
         // 如果连模型都没有配置，返回null或抛出异常
         return null;
     }
-    
 
+    @Data
+    public static class MCPServerConfig {
+        private String name; // 服务器名称
+        private String command;  // 启动命令（如："npx @modelcontextprotocol/server-filesystem"）
+        private boolean enabled = true; // 是否启用
+        private List<String> args = new ArrayList<>(); // 命令行参数
+
+        // 手动添加 getter/setter
+        public String getName() { return name; }
+        public void setName(String name) { this.name = name; }
+        public String getCommand() { return command; }
+        public void setCommand(String command) { this.command = command; }
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public List<String> getArgs() { return args; }
+        public void setArgs(List<String> args) { this.args = args; }
+    }
+
+    @Data
+    public static class MCPConfig {
+        private boolean enabled = false;
+        private List<MCPServerConfig> servers = new ArrayList<>();
+        private boolean autoDiscover = true;
+        private int connectionTimeout = 30;
+
+        // 手动添加 getter/setter
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public List<MCPServerConfig> getServers() { return servers; }
+        public void setServers(List<MCPServerConfig> servers) { this.servers = servers; }
+        public boolean isAutoDiscover() { return autoDiscover; }
+        public void setAutoDiscover(boolean autoDiscover) { this.autoDiscover = autoDiscover; }
+        public int getConnectionTimeout() { return connectionTimeout; }
+        public void setConnectionTimeout(int connectionTimeout) { this.connectionTimeout = connectionTimeout; }
+    }
+
+    @Data
     public static class ModelConfig {
         @JsonProperty("name")
         private String name;
@@ -131,6 +188,7 @@ public class AppConfig {
         }
     }
 
+    @Data
     public static class ToolsConfig {
         @JsonProperty("fileManager")
         private ToolConfig fileManager = new ToolConfig(); // Ensure fileManager is initialized
@@ -190,6 +248,7 @@ public class AppConfig {
         }
     }
 
+    @Data
     public static class ToolConfig {
         @JsonProperty("enabled")
         private boolean enabled = true;

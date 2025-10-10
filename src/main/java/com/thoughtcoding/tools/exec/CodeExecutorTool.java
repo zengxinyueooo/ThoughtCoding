@@ -15,8 +15,10 @@ import java.util.List;
 
 public class CodeExecutorTool extends BaseTool {
 
+    private final AppConfig appConfig;
     public CodeExecutorTool(AppConfig appConfig) {
         super("code_executor", "Execute code snippets in various programming languages");
+        this.appConfig = appConfig;
     }
 
     @Override
@@ -125,5 +127,15 @@ public class CodeExecutorTool extends BaseTool {
         } catch (Exception e) {
             return error("Python execution failed: " + e.getMessage(), System.currentTimeMillis() - startTime);
         }
+    }
+
+    @Override
+    public String getCategory() {
+        return "exec";
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return appConfig != null && appConfig.getTools().getCommandExec().isEnabled();
     }
 }

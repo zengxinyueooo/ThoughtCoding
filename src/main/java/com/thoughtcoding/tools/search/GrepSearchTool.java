@@ -15,8 +15,10 @@ import java.util.regex.PatternSyntaxException;
 
 public class GrepSearchTool extends BaseTool {
 
+    private final AppConfig appConfig;
     public GrepSearchTool(AppConfig appConfig) {
         super("grep_search", "Search for text patterns in files using grep-like functionality");
+        this.appConfig = appConfig;
     }
 
     @Override
@@ -92,5 +94,15 @@ public class GrepSearchTool extends BaseTool {
         } catch (IOException e) {
             results.add(String.format("%s: ERROR - %s", file, e.getMessage()));
         }
+    }
+
+    @Override
+    public String getCategory() {
+        return "exec";
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return appConfig != null && appConfig.getTools().getCommandExec().isEnabled();
     }
 }

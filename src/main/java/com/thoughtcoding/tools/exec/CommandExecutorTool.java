@@ -13,9 +13,11 @@ import java.util.Set;
 
 public class CommandExecutorTool extends BaseTool {
     private final Set<String> allowedCommands;
+    private final AppConfig appConfig;
 
     public CommandExecutorTool(AppConfig appConfig) {
         super("command_executor", "Execute system commands safely");
+        this.appConfig = appConfig;
 
         if (appConfig.getTools().getCommandExec().getAllowedCommands() != null) {
             this.allowedCommands = new HashSet<>(Arrays.asList(appConfig.getTools().getCommandExec().getAllowedCommands()));
@@ -81,5 +83,15 @@ public class CommandExecutorTool extends BaseTool {
 
     public Set<String> getAllowedCommands() {
         return new HashSet<>(allowedCommands);
+    }
+
+    @Override
+    public String getCategory() {
+        return "exec";
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return appConfig != null && appConfig.getTools().getCommandExec().isEnabled();
     }
 }

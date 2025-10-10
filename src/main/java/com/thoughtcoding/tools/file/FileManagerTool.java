@@ -14,10 +14,14 @@ import java.util.List;
 
 public class FileManagerTool extends BaseTool {
     private final long maxFileSize;
+    private final AppConfig appConfig;
+
+
 
     public FileManagerTool(AppConfig appConfig) {
         super("file_manager", "File management tool for reading, writing, and managing files");
         this.maxFileSize = appConfig.getTools().getFileManager().getMaxFileSize();
+        this.appConfig = appConfig;
     }
 
     @Override
@@ -183,5 +187,15 @@ public class FileManagerTool extends BaseTool {
         } catch (IOException e) {
             return error("Failed to get file info: " + e.getMessage(), System.currentTimeMillis() - startTime);
         }
+    }
+
+    @Override
+    public String getCategory() {
+        return "file";
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return appConfig.getTools().getFileManager().isEnabled();
     }
 }

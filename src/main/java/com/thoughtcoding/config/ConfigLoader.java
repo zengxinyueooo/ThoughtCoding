@@ -3,6 +3,8 @@ package com.thoughtcoding.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.thoughtcoding.mcp.MCPService;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.File;
 import java.io.InputStream;
@@ -10,7 +12,38 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
+
 public class ConfigLoader {
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ConfigLoader.class);
+
+    private  MCPService mcpService;
+    // 无参构造函数
+    public ConfigLoader() {
+    }
+    //添加构造函数
+    public ConfigLoader(MCPService mcpService) {
+        this.mcpService = mcpService;
+    }
+    private AppConfig appConfig;
+
+
+
+    // 在配置加载后初始化 MCP
+    public void initializeMCP() {
+        AppConfig.MCPConfig mcpConfig = appConfig.getMcp();
+        if (mcpConfig != null && mcpConfig.isEnabled()) {
+            log.info("初始化配置的MCP服务器...");
+            for (AppConfig.MCPServerConfig serverConfig : mcpConfig.getServers()) {
+                if (serverConfig.isEnabled()) {
+                    mcpService.connectToServer(
+                            serverConfig.getName(),
+                            serverConfig.getCommand(),
+                            serverConfig.getArgs()
+                    );
+                }
+            }
+        }
+    }
 
     public AppConfig loadConfig(String configPath) {
         try {

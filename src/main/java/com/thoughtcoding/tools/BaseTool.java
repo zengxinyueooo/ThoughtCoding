@@ -13,6 +13,8 @@ public abstract class BaseTool {
     }
 
     public abstract ToolResult execute(String input);
+    public abstract String getCategory();
+    public abstract boolean isEnabled();
 
     public String getName() {
         return name;
