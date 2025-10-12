@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/util/JsonUtils.java
 package com.thoughtcoding.util;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -11,6 +10,9 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 
+/**
+ * JSON处理工具类，基于Jackson库
+ */
 public class JsonUtils {
     private static final ObjectMapper mapper;
 

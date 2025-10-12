@@ -1,10 +1,12 @@
-// src/main/java/com/thoughtcoding/model/SessionData.java
 package com.thoughtcoding.model;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 会话数据模型，包含会话ID、标题、创建时间、最后访问时间和消息列表
+ */
 public class SessionData {
     private final String sessionId;
     private final String title;

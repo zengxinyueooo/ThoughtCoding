@@ -12,7 +12,9 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
-
+/**
+ * MCPCommand类用于管理MCP工具和服务器的命令行操作
+ */
 @Command(name = "mcp", description = "MCP工具管理")
 public class MCPCommand implements Runnable {
 

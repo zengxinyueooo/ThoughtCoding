@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/util/FileUtils.java
 package com.thoughtcoding.util;
 
 import java.io.*;
@@ -10,6 +9,9 @@ import java.util.List;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
+/**
+ * 文件操作工具类
+ */
 public class FileUtils {
 
     private FileUtils() {

@@ -3,6 +3,9 @@ package com.thoughtcoding.mcp.model;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
+/**
+ * MCP错误模型，包含错误代码、消息和数据
+ */
 @Data
 public class MCPError {
     @JsonProperty("code")

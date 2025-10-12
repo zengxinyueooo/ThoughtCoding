@@ -9,6 +9,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 应用配置类，包含模型和工具的配置
+ * 具体包括：ToolsConfig, ToolConfig, ModelConfig, MCPConfig, MCPServerConfig
+ */
 @JsonIgnoreProperties(ignoreUnknown = true)
 @Data
 public class AppConfig {

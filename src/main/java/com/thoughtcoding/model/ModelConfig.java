@@ -1,8 +1,10 @@
-// src/main/java/com/thoughtcoding/model/ModelConfig.java
 package com.thoughtcoding.model;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+/**
+ * 模型配置类，包含模型名称、基础URL、API密钥、流式传输选项、最大令牌数和温度
+ */
 public class ModelConfig {
     @JsonProperty("name")
     private String name;

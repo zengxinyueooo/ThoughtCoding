@@ -12,7 +12,9 @@ import org.slf4j.LoggerFactory;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
-
+/**
+ * MCP服务，管理与多个MCP服务器的连接和工具调用
+ */
 public class MCPService {
     private static final Logger log = LoggerFactory.getLogger(MCPService.class);
     private final Map<String, MCPClient> connectedServers = new ConcurrentHashMap<>();
@@ -25,47 +27,7 @@ public class MCPService {
     // 添加 clients 映射
     private final Map<String, MCPClient> clients = new ConcurrentHashMap<>();
 
-    /*public List<BaseTool> connectToServer(String serverName, List<String > serverConfig) {
-        try {
-            String command = (String) serverConfig.get("command");
-            Object argsObj = serverConfig.get("args");
 
-            log.info("命令: {}", command);
-            log.info("参数: {}", argsObj);
-
-            // 清理旧连接
-            if (clients.containsKey(serverName)) {
-                MCPClient existingClient = clients.get(serverName);
-                if (existingClient != null && existingClient.isConnected()) {
-                    existingClient.disconnect();
-                }
-                clients.remove(serverName);
-            }
-
-            MCPClient client = new MCPClient(serverName);
-
-            boolean connected = false;
-            if (argsObj instanceof Map) {
-                connected = client.connect(command, (Map<String, Object>) argsObj);
-            } else {
-                connected = client.connect(command, new HashMap<>());
-            }
-
-            if (connected) {
-                clients.put(serverName, client);
-                List<MCPTool> mcpTools = client.getAvailableTools();
-                List<BaseTool> baseTools = convertToBaseTools(mcpTools, serverName);
-                log.info("✅ 成功连接MCP服务器: {} ({} 个工具)", serverName, baseTools.size());
-                return baseTools;
-            } else {
-                log.warn("⚠️ 连接MCP服务器失败: {}", serverName);
-                return Collections.emptyList();
-            }
-        } catch (Exception e) {
-            log.error("❌ 连接MCP服务器异常: {}", serverName, e);
-            return Collections.emptyList();
-        }
-    }*/
     // 🔥 新增3参数方法
     public List<BaseTool> connectToServer(String serverName, String command, List<String> args) {
         try {

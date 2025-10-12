@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/cli/SessionCommand.java
 package com.thoughtcoding.cli;
 
 
@@ -10,6 +9,9 @@ import picocli.CommandLine.Option;
 
 import java.util.concurrent.Callable;
 
+/**
+ * SessionCommand类用于管理会话相关的命令行操作
+ */
 @Command(name = "session", description = "Session management commands")
 public class SessionCommand implements Callable<Integer> {
 

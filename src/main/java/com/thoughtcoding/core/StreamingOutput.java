@@ -1,10 +1,12 @@
-// src/main/java/com/thoughtcoding/core/StreamingOutput.java
 package com.thoughtcoding.core;
 
 import com.thoughtcoding.model.ChatMessage;
 
 import java.util.function.Consumer;
 
+/**
+ * StreamingOutput类用于处理流式输出，将生成的内容逐步传递给消息处理器。
+ */
 public class StreamingOutput {
     private final Consumer<ChatMessage> messageHandler;
     private final StringBuilder currentContent;

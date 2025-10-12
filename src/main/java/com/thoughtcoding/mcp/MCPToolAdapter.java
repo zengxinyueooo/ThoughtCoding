@@ -9,12 +9,15 @@ import lombok.extern.slf4j.Slf4j;
 import java.util.HashMap;
 import java.util.Map;
 
-
+/**
+ * MCP工具适配器，将MCPTool封装为BaseTool以便系统调用
+ */
 public class MCPToolAdapter extends BaseTool {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(MCPToolAdapter.class);
     private final MCPTool mcpTool;
     private final MCPClient mcpClient;
 
+    // 构造函数
     public MCPToolAdapter(MCPTool mcpTool, MCPClient mcpClient) {
         super("mcp:" + mcpClient.getServerName() + "/" + mcpTool.getName(),
                 mcpTool.getDescription());

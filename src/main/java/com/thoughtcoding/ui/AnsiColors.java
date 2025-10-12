@@ -1,6 +1,8 @@
-// src/main/java/com/thoughtcoding/ui/AnsiColors.java
 package com.thoughtcoding.ui;
 
+/**
+ * ANSI颜色和样式的定义类，提供了便捷的方法来为终端输出添加颜色和样式
+ */
 public class AnsiColors {
     // 重置所有属性
     public static final String RESET = "\u001B[0m";

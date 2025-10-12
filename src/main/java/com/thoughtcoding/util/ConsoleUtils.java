@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/util/ConsoleUtils.java
 package com.thoughtcoding.util;
 
 import com.thoughtcoding.ui.AnsiColors;
@@ -6,6 +5,9 @@ import com.thoughtcoding.ui.AnsiColors;
 import java.io.Console;
 import java.util.Scanner;
 
+/**
+ * 控制台工具类
+ */
 public class ConsoleUtils {
 
     private ConsoleUtils() {

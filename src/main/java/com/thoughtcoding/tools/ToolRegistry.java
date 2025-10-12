@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/tools/ToolRegistry.java
 package com.thoughtcoding.tools;
 
 import com.thoughtcoding.config.AppConfig;
@@ -9,6 +8,11 @@ import com.thoughtcoding.tools.search.GrepSearchTool;
 
 import java.util.*;
 
+/**
+ * 负责工具注册、发现和生命周期管理
+ *
+ * 工具系统的核心管理者，维护了所有可用工具的映射表，并提供统一的调用接口，
+ */
 public class ToolRegistry implements ToolProvider {
     private final Map<String, BaseTool> tools;
     private final AppConfig appConfig;
@@ -64,6 +68,7 @@ public class ToolRegistry implements ToolProvider {
         return !tools.isEmpty();
     }
 
+    //内置工具直接实例化注册
     private boolean isToolEnabled(String toolName) {
         // 检查配置中是否启用了该工具
         if (appConfig == null || appConfig.getTools() == null) {

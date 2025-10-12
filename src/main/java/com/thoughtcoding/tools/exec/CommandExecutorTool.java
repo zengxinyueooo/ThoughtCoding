@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/tools/exec/CommandExecutorTool.java
 package com.thoughtcoding.tools.exec;
 
 import com.thoughtcoding.config.AppConfig;
@@ -11,6 +10,9 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 
+/**
+ * 命令执行工具，允许执行预定义的系统命令
+ */
 public class CommandExecutorTool extends BaseTool {
     private final Set<String> allowedCommands;
     private final AppConfig appConfig;

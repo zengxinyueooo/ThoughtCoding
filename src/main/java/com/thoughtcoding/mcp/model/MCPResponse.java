@@ -3,6 +3,9 @@ package com.thoughtcoding.mcp.model;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
+/**
+ * MCP响应模型，包含JSON-RPC版本、ID、结果和错误信息
+ */
 @Data
 public class MCPResponse {
     @JsonProperty("jsonrpc")

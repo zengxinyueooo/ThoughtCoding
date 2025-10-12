@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/tools/search/GrepSearchTool.java
 package com.thoughtcoding.tools.search;
 
 import com.thoughtcoding.config.AppConfig;
@@ -13,6 +12,9 @@ import java.util.List;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
+/**
+ * Grep 搜索工具，支持在文件和目录中搜索文本模式
+ */
 public class GrepSearchTool extends BaseTool {
 
     private final AppConfig appConfig;

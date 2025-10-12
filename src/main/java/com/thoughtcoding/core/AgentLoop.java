@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/core/AgentLoop.java
 package com.thoughtcoding.core;
 
 
@@ -14,6 +13,19 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
+/**
+ * 在ThoughtCodingCommand中管理AI交互的核心循环（此类中没有实现 转到ThoughtCodingCommand查看）
+ *
+ * AgentLoop启动和协调 ，AI对话、工具调用、会话管理等
+ *
+ * 流程协调：管理从用户输入到AI响应的完整流程
+ *
+ * 工具调度：协调AI模型与工具系统的交互
+ *
+ * 状态管理：维护对话状态和上下文
+ *
+ * 错误处理：处理整个流程中的异常情况
+ */
 public class AgentLoop {
     private final ThoughtCodingContext context;
     private final List<ChatMessage> history;
@@ -64,54 +76,6 @@ public class AgentLoop {
         }
     }
 
-   /* public void processInput(String input) {
-        // 开始性能监控
-        PerformanceMonitor monitor = context.getPerformanceMonitor();
-        monitor.start();
-
-        try {
-            // 添加用户消息到历史
-            ChatMessage userMessage = new ChatMessage("user", input);
-            history.add(userMessage);
-
-            // 显示用户消息（带对话框效果）- 确保调用这个方法
-            if (context.getUi() != null) {
-                context.getUi().displayUserMessageWithBox(userMessage);
-            } else {
-                System.out.println("UI is null!");
-            }
-
-            // 显示AI正在思考的提示
-            context.getUi().displayTypingEffect();
-
-            // 流式处理AI响应
-            List<ChatMessage> aiResponse = context.getAiService().streamingChat(input, history, modelName);
-
-            // 添加AI响应到历史
-            if (aiResponse != null && !aiResponse.isEmpty()) {
-                for (ChatMessage message : aiResponse) {
-                    history.add(message);
-                    // 显示AI消息（带对话框效果）
-                    context.getUi().displayAssistantMessageWithBox(message);
-                }
-            } else {
-                // 如果没有响应，显示一个默认消息
-                ChatMessage defaultResponse = new ChatMessage("assistant", "I'm thinking...");
-                history.add(defaultResponse);
-                context.getUi().displayAssistantMessageWithBox(defaultResponse);
-            }
-
-            // 保存会话
-            context.getSessionService().saveSession(sessionId, history);
-
-        } catch (Exception e) {
-            context.getUi().displayError("Error processing input: " + e.getMessage());
-            e.printStackTrace(); // 添加堆栈跟踪以便调试
-        } finally {
-            // 结束性能监控
-            monitor.stop();
-        }
-    }*/
 
     private void handleMessage(ChatMessage message) {
         // 显示AI消息

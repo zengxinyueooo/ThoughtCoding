@@ -1,8 +1,12 @@
-// src/main/java/com/thoughtcoding/model/ToolCall.java
 package com.thoughtcoding.model;
 
 import java.util.Map;
 
+/**
+ * 记录工具调用的详细信息
+ *
+ * 包含工具名称、参数、结果、执行时间等
+ */
 public class ToolCall {
     private final String id;
     private final String toolName;

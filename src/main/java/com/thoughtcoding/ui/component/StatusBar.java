@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/ui/component/StatusBar.java
 package com.thoughtcoding.ui.component;
 
 import com.thoughtcoding.service.PerformanceMonitor;
@@ -8,6 +7,9 @@ import org.jline.terminal.Terminal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
+/**
+ * 状态栏组件，负责在终端中显示各种状态信息，如普通信息、错误、成功、警告、性能数据等
+ */
 public class StatusBar {
     private final Terminal terminal;
     private final DateTimeFormatter timeFormatter;

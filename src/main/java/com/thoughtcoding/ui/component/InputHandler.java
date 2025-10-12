@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/ui/component/InputHandler.java
 package com.thoughtcoding.ui.component;
 
 import org.jline.reader.Completer;
@@ -8,6 +7,9 @@ import org.jline.reader.UserInterruptException;
 import org.jline.reader.EndOfFileException;
 import org.jline.terminal.Terminal;
 
+/**
+ * 输入处理组件，负责读取用户输入和密码，并支持自动补全功能
+ */
 public class InputHandler {
     private LineReader lineReader;
     private Completer completer;

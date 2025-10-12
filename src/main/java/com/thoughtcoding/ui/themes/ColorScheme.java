@@ -1,6 +1,8 @@
-// src/main/java/com/thoughtcoding/ui/themes/ColorScheme.java
 package com.thoughtcoding.ui.themes;
 
+/**
+ * 颜色方案类，定义了一组颜色属性，用于终端UI的主题配置
+ */
 public class ColorScheme {
     // 预定义主题
     public static final ColorScheme DEFAULT = new ColorScheme(

@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/tools/exec/CodeExecutorTool.java
 package com.thoughtcoding.tools.exec;
 
 import com.thoughtcoding.config.AppConfig;
@@ -13,6 +12,9 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 代码执行工具，支持多种编程语言的代码片段执行
+ */
 public class CodeExecutorTool extends BaseTool {
 
     private final AppConfig appConfig;

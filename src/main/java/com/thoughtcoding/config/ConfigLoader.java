@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/config/ConfigLoader.java
 package com.thoughtcoding.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -12,7 +11,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
-
+/**
+ * 配置加载器，负责从文件系统或类路径加载YAML配置文件
+ */
 public class ConfigLoader {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ConfigLoader.class);
 

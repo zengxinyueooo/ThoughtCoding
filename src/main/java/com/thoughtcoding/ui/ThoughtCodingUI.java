@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/ui/ThoughtCodingUI.java
 package com.thoughtcoding.ui;
 
 import com.thoughtcoding.model.ChatMessage;
@@ -17,6 +16,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+/**
+ * ThoughtCodingUI 类，管理终端用户界面和交互
+ */
 public class ThoughtCodingUI {
     private final Terminal terminal;
     private final LineReader lineReader;
@@ -33,25 +35,25 @@ public class ThoughtCodingUI {
         try {
             // 初始化JLine终端
             this.terminal = TerminalBuilder.builder()
-                    .name("ThoughtCoding")
-                    .system(true)
-                    .build();
+                    .name("ThoughtCoding") // 终端名称
+                    .system(true) // 使用系统终端
+                    .build(); // 构建终端
 
             // 初始化行阅读器
             this.lineReader = LineReaderBuilder.builder()
-                    .terminal(terminal)
-                    .completer(new StringsCompleter("exit", "quit", "clear", "help", "new", "save", "list"))
-                    .build();
+                    .terminal(terminal) //关联终端
+                    .completer(new StringsCompleter("exit", "quit", "clear", "help", "new", "save", "list"))//命令补全
+                    .build();//构建行阅读器
 
             // 初始化UI组件
-            this.chatRenderer = new ChatRenderer(terminal);
-            this.toolDisplay = new ToolDisplay(terminal);
-            this.statusBar = new StatusBar(terminal);
-            this.progressIndicator = new ProgressIndicator(terminal);
+            this.chatRenderer = new ChatRenderer(terminal);//聊天渲染器
+            this.toolDisplay = new ToolDisplay(terminal);//工具显示
+            this.statusBar = new StatusBar(terminal);//状态栏
+            this.progressIndicator = new ProgressIndicator(terminal);//进度指示器
             this.inputHandler = new InputHandler(
                     terminal,
                     new StringsCompleter("exit", "quit", "clear", "help", "new", "save", "list")
-            );
+            );//输入处理器
 
         } catch (IOException e) {
             throw new RuntimeException("Failed to initialize terminal", e);

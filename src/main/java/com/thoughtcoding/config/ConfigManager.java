@@ -1,8 +1,10 @@
-// src/main/java/com/thoughtcoding/config/ConfigManager.java
 package com.thoughtcoding.config;
 
 import com.thoughtcoding.mcp.MCPService;
 
+/**
+ * 配置管理单例类，负责加载和提供应用配置
+ */
 public class ConfigManager {
     private static ConfigManager instance;
     private AppConfig appConfig;

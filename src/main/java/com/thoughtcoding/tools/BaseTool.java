@@ -1,8 +1,10 @@
-// src/main/java/com/thoughtcoding/tools/BaseTool.java
 package com.thoughtcoding.tools;
 
 import com.thoughtcoding.model.ToolResult;
 
+/**
+ * 工具的抽象基类，定义了工具的基本属性和行为
+ */
 public abstract class BaseTool {
     protected final String name;
     protected final String description;

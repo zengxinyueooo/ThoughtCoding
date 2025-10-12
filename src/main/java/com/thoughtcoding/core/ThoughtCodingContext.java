@@ -19,6 +19,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 上下文初始化过程
+ *
+ * 依赖注入：确保各个组件都能获取到它们需要的依赖
+ *
+ * 生命周期管理：控制初始化顺序，避免循环依赖
+ *
+ * 资源配置：建立数据库连接、网络连接、文件句柄等
+ */
 public class ThoughtCodingContext {
     private final AppConfig appConfig;
     private final AIService aiService;
@@ -43,12 +52,14 @@ public class ThoughtCodingContext {
     }
 
     public static ThoughtCodingContext initialize() {
+        // 分层初始化，确保依赖顺序正确
+
         // 初始化配置管理器
         ConfigManager configManager = ConfigManager.getInstance();
         configManager.initialize("config.yaml");
         AppConfig appConfig = configManager.getAppConfig();
 
-        // 创建工具注册表
+        // 能力层初始化,创建工具注册表
         ToolRegistry toolRegistry = new ToolRegistry(appConfig);
 
         // 🔥 创建 MCP 服务
@@ -77,15 +88,15 @@ public class ThoughtCodingContext {
             initializeMCPTools(appConfig, mcpService);
         }
 
-        // 创建服务
+        // 服务层初始化
         AIService aiService = new LangChainService(appConfig, toolRegistry);
         SessionService sessionService = new SessionService();
         PerformanceMonitor performanceMonitor = new PerformanceMonitor();
 
-        // 创建UI
+        // UI层初始化
         ThoughtCodingUI ui = new ThoughtCodingUI();
 
-        // 构建上下文
+        // 构建上下文（核心层初始化）
         return new Builder()
                 .appConfig(appConfig)
                 .aiService(aiService)

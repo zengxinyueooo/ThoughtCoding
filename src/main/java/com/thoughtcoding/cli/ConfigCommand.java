@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/cli/ConfigCommand.java
 package com.thoughtcoding.cli;
 
 
@@ -9,6 +8,9 @@ import picocli.CommandLine.Option;
 
 import java.util.concurrent.Callable;
 
+/**
+ * ConfigCommand类用于管理配置相关的命令行操作
+ */
 @Command(name = "config", description = "Configuration management commands")
 public class ConfigCommand implements Callable<Integer> {
 

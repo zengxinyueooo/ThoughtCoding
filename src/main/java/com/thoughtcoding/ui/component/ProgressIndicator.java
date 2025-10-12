@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/ui/component/ProgressIndicator.java
 package com.thoughtcoding.ui.component;
 
 import com.thoughtcoding.ui.AnsiColors;
@@ -10,6 +9,9 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * 进度指示器组件，负责在终端中显示和更新进度动画
+ */
 public class ProgressIndicator {
     private final Terminal terminal;
     private final ScheduledExecutorService scheduler;

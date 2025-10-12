@@ -11,6 +11,17 @@ import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 
+/**
+ * 命令解析和路由
+ *
+ * 参数解析：Picocli自动将 --interactive 等参数映射到字段
+ *
+ * 命令路由：根据参数组合决定执行路径
+ *
+ * 上下文传递：确保所有命令都能访问统一的上下文
+ *
+ * 服务获取和准备，通过Context统一获取服务实例 (Command类从Context获取服务)
+ */
 @CommandLine.Command(name = "thought", mixinStandardHelpOptions = true,
         description = "ThoughtCoding CLI - Interactive Code Assistant")
 public class ThoughtCodingCommand implements Callable<Integer> {
@@ -138,6 +149,14 @@ public class ThoughtCodingCommand implements Callable<Integer> {
             }
 
             // 创建Agent循环
+            // AgentLoop启动和协调 ，AI对话、工具调用、会话管理等
+            /*流程协调：管理从用户输入到AI响应的完整流程
+
+            工具调度：协调AI模型与工具系统的交互
+
+            状态管理：维护对话状态和上下文
+
+            错误处理：处理整个流程中的异常情况*/
             currentAgentLoop = new AgentLoop(context, currentSessionId, modelToUse);
             currentAgentLoop.loadHistory(history);
 
@@ -149,7 +168,7 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                     ChatMessage userMessage = new ChatMessage("user", prompt);
                     ui.displayUserMessage(userMessage);
 
-                    // 处理AI响应
+                    // 处理AI响应，协调整个处理流程
                     currentAgentLoop.processInput(prompt);
 
                     return 0;
@@ -160,6 +179,7 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                 }
             }
 
+            // Picocli自动解析命令行参数并注入到字段中
             // 交互式模式
             if (interactive) {
                 return startInteractiveMode(currentAgentLoop, ui);
@@ -234,6 +254,7 @@ public class ThoughtCodingCommand implements Callable<Integer> {
 
                 // 退出命令
                 if (trimmedInput.equalsIgnoreCase("exit") || trimmedInput.equalsIgnoreCase("quit")) {
+                    // 设置UI回调
                     ui.displayInfo("Goodbye!");
                     break;
                 }
@@ -431,6 +452,7 @@ public class ThoughtCodingCommand implements Callable<Integer> {
     private void handleContinueInInteractive(AgentLoop currentAgentLoop) {
         ThoughtCodingUI ui = context.getUi();
         try {
+            //Command从Context获取服务
             String latestSessionId = context.getSessionService().getLatestSessionId();
             if (latestSessionId != null) {
                 List<ChatMessage> history = context.getSessionService().loadSession(latestSessionId);

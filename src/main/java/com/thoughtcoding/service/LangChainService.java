@@ -16,6 +16,15 @@ import java.util.List;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
+/**
+ * 集成LangChain4j和DeepSeek API的AI服务实现，功能包括：
+ * - 流式聊天：支持实时响应的流式聊天交互
+ * - 模型管理：根据配置动态选择和初始化模型
+ * - 消息处理：通过回调处理和传递消息
+ * - 错误处理：捕获和处理API调用中的异常
+ * - 工具集成：与工具注册系统协同工作
+ * - 性能监控：跟踪和报告令牌使用情况
+ */
 public class LangChainService implements AIService {
     private final AppConfig appConfig;
     private final ToolRegistry toolRegistry;

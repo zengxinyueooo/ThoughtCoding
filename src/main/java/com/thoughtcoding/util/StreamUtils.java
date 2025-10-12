@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/util/StreamUtils.java
 package com.thoughtcoding.util;
 
 import java.io.*;
@@ -6,6 +5,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
+/**
+ * 流操作工具类
+ */
 public class StreamUtils {
 
     private StreamUtils() {

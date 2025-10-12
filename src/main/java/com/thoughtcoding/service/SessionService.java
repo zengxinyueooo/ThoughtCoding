@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/service/SessionService.java
 package com.thoughtcoding.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -15,6 +14,11 @@ import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
 
+/**
+ * 会话管理服务，负责创建、保存、加载和删除会话
+ *
+ * 支持自动保存
+ */
 public class SessionService {
 
     private static final String SESSIONS_DIR = "sessions";

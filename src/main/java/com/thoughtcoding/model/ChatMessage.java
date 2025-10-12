@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/model/ChatMessage.java
 package com.thoughtcoding.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
@@ -8,6 +7,9 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+/**
+ *  聊天消息模型，包含消息ID、角色、内容和时间戳
+ */
 @Data
 public class ChatMessage {
     private final String id;

@@ -1,6 +1,8 @@
-// src/main/java/com/thoughtcoding/model/ToolResult.java
 package com.thoughtcoding.model;
 
+/**
+ * 封装工具执行结果
+ */
 public class ToolResult {
     private final boolean success;
     private final String output;

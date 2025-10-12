@@ -3,6 +3,9 @@ package com.thoughtcoding.mcp.model;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
+/**
+ * MCP工具模型，包含名称、描述和输入模式
+ */
 @Data
 public class MCPTool {
     @JsonProperty("name")

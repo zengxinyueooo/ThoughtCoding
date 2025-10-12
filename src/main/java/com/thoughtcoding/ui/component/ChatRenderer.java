@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/ui/component/ChatRenderer.java
 package com.thoughtcoding.ui.component;
 
 import com.thoughtcoding.model.ChatMessage;
@@ -8,6 +7,9 @@ import org.jline.terminal.Terminal;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
+/**
+ * 聊天渲染组件，负责在终端中美观地展示用户和AI的消息，以及会话列表
+ */
 public class ChatRenderer {
     private final Terminal terminal;
     private final DateTimeFormatter timeFormatter;

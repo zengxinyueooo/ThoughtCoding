@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/service/AIService.java
 package com.thoughtcoding.service;
 
 import com.thoughtcoding.model.ChatMessage;
@@ -7,6 +6,9 @@ import com.thoughtcoding.model.ToolCall;
 import java.util.List;
 import java.util.function.Consumer;
 
+/**
+ * AI 服务接口，定义了与 AI 模型交互的方法
+ */
 public interface AIService {
     List<ChatMessage> chat(String input, List<ChatMessage> history, String modelName);
     List<ChatMessage> streamingChat(String input, List<ChatMessage> history, String modelName);

@@ -1,10 +1,12 @@
-// src/main/java/com/thoughtcoding/ui/component/ToolDisplay.java
 package com.thoughtcoding.ui.component;
 
 import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.ui.AnsiColors;
 import org.jline.terminal.Terminal;
 
+/**
+ * 工具调用显示组件，负责在终端中美观地展示工具调用的状态和结果
+ */
 public class ToolDisplay {
     private final Terminal terminal;
 

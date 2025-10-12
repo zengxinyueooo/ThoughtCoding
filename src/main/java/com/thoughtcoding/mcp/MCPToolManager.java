@@ -7,6 +7,9 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 
+/**
+ * MCP工具管理器，负责管理预定义和自定义的MCP工具连接
+ */
 public class MCPToolManager {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(MCPToolManager.class);
     // 预定义的常用MCP工具映射

@@ -5,6 +5,9 @@ import lombok.Data;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * MCP请求模型，包含JSON-RPC版本、ID、方法和参数
+ */
 @Data
 public class MCPRequest {
     @JsonProperty("jsonrpc")

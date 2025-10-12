@@ -1,10 +1,12 @@
-// src/main/java/com/thoughtcoding/service/PerformanceMonitor.java
 package com.thoughtcoding.service;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * 性能监控器，跟踪请求数、令牌数、工具调用数和执行时间
+ */
 public class PerformanceMonitor {
     private Instant startTime;
     private final AtomicLong totalRequests;

@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/ui/TerminalManager.java
 package com.thoughtcoding.ui;
 
 import org.jline.terminal.Terminal;
@@ -7,6 +6,9 @@ import org.jline.terminal.Size;
 
 import java.io.IOException;
 
+/**
+ * 终端管理类，负责初始化和恢复终端状态，处理终端大小调整等
+ */
 public class TerminalManager {
     private final Terminal terminal;
     private final Attributes originalAttributes;

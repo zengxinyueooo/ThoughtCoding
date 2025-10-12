@@ -1,4 +1,3 @@
-// src/main/java/com/thoughtcoding/tools/file/FileManagerTool.java
 package com.thoughtcoding.tools.file;
 
 import com.thoughtcoding.config.AppConfig;
@@ -12,6 +11,9 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 文件管理工具，支持基本的文件读写和目录操作
+ */
 public class FileManagerTool extends BaseTool {
     private final long maxFileSize;
     private final AppConfig appConfig;

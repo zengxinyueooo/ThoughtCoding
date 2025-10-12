@@ -12,7 +12,9 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
-
+/**
+ * MCP客户端，管理与单个MCP服务器的连接和通信
+ */
 public class MCPClient {
     private static final Logger log = LoggerFactory.getLogger(MCPClient.class); // 应该是 MCPClient.class
     private final ObjectMapper objectMapper = new ObjectMapper();
