@@ -6,9 +6,9 @@
 
 ## 🎥 项目演示
 
-[![下载演示视频](https://img.shields.io/badge/📥_下载演示视频_(379MB)-blue?style=for-the-badge)](项目演示.mp4)
+[![观看演示视频](https://img.shields.io/badge/观看演示视频-red?style=for-the-badge&logo=bilibili)](https://www.bilibili.com/video/BV14D4uzWEhC?vd_source=5a2abdf9d1d2a4d1cb15fa9b92f6fbb2)
 
-*点击按钮下载演示视频到本地观看*
+*点击按钮前往bilibili观看完整项目演示*
 
 ## 🚀 项目特性
 
