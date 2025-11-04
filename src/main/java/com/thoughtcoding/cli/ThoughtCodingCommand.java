@@ -1,6 +1,7 @@
 package com.thoughtcoding.cli;
 
 import com.thoughtcoding.core.AgentLoop;
+import com.thoughtcoding.core.DirectCommandExecutor;
 import com.thoughtcoding.core.ThoughtCodingContext;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.service.SessionService;
@@ -31,6 +32,9 @@ public class ThoughtCodingCommand implements Callable<Integer> {
     // 添加会话管理字段
     private AgentLoop currentAgentLoop;
     private String currentSessionId;
+
+    // 直接命令执行器
+    private DirectCommandExecutor directCommandExecutor;
 
     @CommandLine.Option(names = {"-i", "--interactive"}, description = "Run in interactive mode")
     private boolean interactive = true;
@@ -71,6 +75,7 @@ public class ThoughtCodingCommand implements Callable<Integer> {
 
     public ThoughtCodingCommand(ThoughtCodingContext context) {
         this.context = context;
+        this.directCommandExecutor = new DirectCommandExecutor(context);
     }
 
     @Override
@@ -271,9 +276,21 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                     continue;
                 }
 
+                // 🔧 直接命令帮助
+                if (trimmedInput.equalsIgnoreCase("/commands") || trimmedInput.equalsIgnoreCase("/cmds")) {
+                    directCommandExecutor.listSupportedCommands();
+                    continue;
+                }
+
                 // 🔥 MCP 相关命令 - 直接在这里处理
                 if (trimmedInput.startsWith("/mcp")) {
                     handleMCPCommand(trimmedInput);
+                    continue;
+                }
+
+                // 🚀 新增：检查是否是直接命令执行
+                if (directCommandExecutor.shouldExecuteDirectly(trimmedInput)) {
+                    directCommandExecutor.executeDirectCommand(trimmedInput);
                     continue;
                 }
 
@@ -517,6 +534,12 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                                                                   /list         查看所有会话
                                                                   /clear        清空屏幕
                                                                   /help         显示帮助信息
+                                                               \s
+                                                                🔧 直接命令：
+                                                                  java version  直接执行Java命令
+                                                                  git status    直接执行Git命令
+                                                                  pwd, ls, etc. 系统命令直接执行
+                                                                  /commands     查看所有支持直接执行的命令
                                                                \s
                                                                 🔧 MCP 命令：
                                                                   /mcp list             列出MCP工具

@@ -24,8 +24,23 @@ public class CommandExecutorTool extends BaseTool {
         if (appConfig.getTools().getCommandExec().getAllowedCommands() != null) {
             this.allowedCommands = new HashSet<>(Arrays.asList(appConfig.getTools().getCommandExec().getAllowedCommands()));
         } else {
-            // 默认允许的命令
-            this.allowedCommands = Set.of("ls", "pwd", "cat", "grep", "find", "echo", "which", "where");
+            // 扩展的默认允许命令 - 支持更多开发和系统命令
+            this.allowedCommands = Set.of(
+                // 基础系统命令
+                "ls", "pwd", "cat", "grep", "find", "echo", "which", "where", "whoami", "date", "uname",
+                // 文件操作
+                "head", "tail", "wc", "sort", "uniq", "diff", "cp", "mv", "mkdir", "rmdir", "rm", "chmod", "chown",
+                // 开发工具
+                "java", "javac", "python", "python3", "node", "npm", "mvn", "gradle", "gcc", "g++", "make", "cmake",
+                // Git命令
+                "git", "git-status", "git-log", "git-add", "git-commit", "git-push", "git-pull", "git-branch", "git-checkout", "git-clone", "git-diff",
+                // 网络工具
+                "ping", "curl", "wget", "ssh", "scp", "rsync", "telnet", "netstat", "lsof",
+                // 系统管理
+                "ps", "top", "htop", "kill", "killall", "df", "du", "free", "uptime", "tar", "gzip", "zip", "unzip",
+                // 其他工具
+                "man", "help", "history", "clear", "reset", "exit", "tree", "file", "stat", "ln"
+            );
         }
     }
 
