@@ -55,7 +55,11 @@ public class DirectCommandExecutor {
         // 系统命令
         DIRECT_COMMANDS.put(Pattern.compile("^pwd$", Pattern.CASE_INSENSITIVE), "pwd");
         DIRECT_COMMANDS.put(Pattern.compile("^whoami$", Pattern.CASE_INSENSITIVE), "whoami");
-        DIRECT_COMMANDS.put(Pattern.compile("^ls(?:\\s+-[la]+)?$", Pattern.CASE_INSENSITIVE), "ls");
+        DIRECT_COMMANDS.put(Pattern.compile("^ls(?:\\s+.*)?$", Pattern.CASE_INSENSITIVE), null);  // ls 可以带参数
+        DIRECT_COMMANDS.put(Pattern.compile("^cd\\s+.+$", Pattern.CASE_INSENSITIVE), null);  // cd 命令，保留原始输入
+        DIRECT_COMMANDS.put(Pattern.compile("^cd$", Pattern.CASE_INSENSITIVE), "cd");  // cd 不带参数（回到用户主目录）
+        DIRECT_COMMANDS.put(Pattern.compile("^cd\\s+.+$", Pattern.CASE_INSENSITIVE), null);  // cd 命令，保留原始输入
+        DIRECT_COMMANDS.put(Pattern.compile("^cd$", Pattern.CASE_INSENSITIVE), "cd");  // cd 不带参数（回到用户主目录）
 
         // npm 包管理
         DIRECT_COMMANDS.put(Pattern.compile("^npm\\s+install$", Pattern.CASE_INSENSITIVE), "npm install");
@@ -239,6 +243,11 @@ public class DirectCommandExecutor {
     private boolean shouldUseMCP(String input) {
         String lowerInput = input.toLowerCase();
 
+        // cd 命令应该提示用户或使用文件系统 MCP
+        if (lowerInput.startsWith("cd ") || lowerInput.equals("cd")) {
+            return true;  // 交给 AI 处理，可以使用 filesystem MCP 或给出提示
+        }
+
         // GitHub 相关的关键词
         if (lowerInput.contains("github") ||
             lowerInput.contains("仓库") ||
@@ -282,7 +291,7 @@ public class DirectCommandExecutor {
         for (Map.Entry<Pattern, String> entry : NATURAL_LANGUAGE_COMMANDS.entrySet()) {
             if (entry.getKey().matcher(trimmedInput).matches()) {
                 command = entry.getValue();
-                ui.displayInfo("💡 识别到意图: " + command);
+                // 已移除提示信息，直接执行
                 break;
             }
         }
@@ -407,24 +416,22 @@ public class DirectCommandExecutor {
      * 执行单个命令
      */
     private void executeCommand(String command) {
-        ui.displayInfo("🔧 直接执行命令: " + command);
-
         try {
             ToolResult result = commandExecutor.execute(command);
 
             if (result.isSuccess()) {
-                ui.displaySuccess("✅ 命令执行成功");
+                // 只显示命令输出结果
                 if (result.getOutput() != null && !result.getOutput().isEmpty()) {
-                    ui.displayInfo("输出:\n" + result.getOutput());
+                    ui.displayInfo(result.getOutput());
+                }
+
+                // 显示执行时间
+                if (result.getExecutionTime() > 0) {
+                    ui.displayInfo("⏱️  执行时间: " + result.getExecutionTime() + "ms");
                 }
             } else {
                 String errorMsg = result.getError() != null ? result.getError() : result.getOutput();
                 ui.displayError("❌ 命令执行失败: " + errorMsg);
-            }
-
-            // 显示执行时间
-            if (result.getExecutionTime() > 0) {
-                ui.displayInfo("⏱️  执行时间: " + result.getExecutionTime() + "ms");
             }
 
         } catch (Exception e) {
@@ -461,7 +468,7 @@ public class DirectCommandExecutor {
      * 执行智能上下文命令
      */
     private boolean executeSmartCommand(String smartCommand) {
-        ui.displayInfo("🧠 智能上下文: " + smartCommand);
+        // 移除"智能上下文"提示，直接执行
 
         switch (smartCommand.toLowerCase()) {
             case "info":
@@ -475,7 +482,7 @@ public class DirectCommandExecutor {
             case "build":
                 String buildCmd = projectContext.getBuildCommand();
                 if (buildCmd != null) {
-                    ui.displayInfo("💡 智能识别: build → " + buildCmd);
+                    // 移除"智能识别"提示
                     executeCommand(buildCmd);
                     return true;
                 }
@@ -484,7 +491,7 @@ public class DirectCommandExecutor {
             case "test":
                 String testCmd = projectContext.getTestCommand();
                 if (testCmd != null) {
-                    ui.displayInfo("💡 智能识别: test → " + testCmd);
+                    // 移除"智能识别"提示
                     executeCommand(testCmd);
                     return true;
                 }
@@ -493,7 +500,7 @@ public class DirectCommandExecutor {
             case "clean":
                 String cleanCmd = projectContext.getCleanCommand();
                 if (cleanCmd != null) {
-                    ui.displayInfo("💡 智能识别: clean → " + cleanCmd);
+                    // 移除"智能识别"提示
                     executeCommand(cleanCmd);
                     return true;
                 }
