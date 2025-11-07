@@ -112,6 +112,25 @@ public class DirectCommandExecutor {
         NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*提交.*并.*推送.*", Pattern.CASE_INSENSITIVE), "BATCH:git_commit_push");
         NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*全部.*提交.*推送.*", Pattern.CASE_INSENSITIVE), "BATCH:git_add_commit_push");
         NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*拉取.*并.*合并.*", Pattern.CASE_INSENSITIVE), "git pull");
+
+        // Git 基础命令
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*查看.*git.*状态.*", Pattern.CASE_INSENSITIVE), "git status");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*git.*状态.*", Pattern.CASE_INSENSITIVE), "git status");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*查看.*状态.*", Pattern.CASE_INSENSITIVE), "git status");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile("^状态$", Pattern.CASE_INSENSITIVE), "git status");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*查看.*git.*日志.*", Pattern.CASE_INSENSITIVE), "git log");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*git.*日志.*", Pattern.CASE_INSENSITIVE), "git log");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*查看.*提交.*历史.*", Pattern.CASE_INSENSITIVE), "git log");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*查看.*分支.*", Pattern.CASE_INSENSITIVE), "git branch");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*git.*分支.*", Pattern.CASE_INSENSITIVE), "git branch");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*查看.*差异.*", Pattern.CASE_INSENSITIVE), "git diff");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*git.*差异.*", Pattern.CASE_INSENSITIVE), "git diff");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*推送.*代码.*", Pattern.CASE_INSENSITIVE), "git push");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*拉取.*代码.*", Pattern.CASE_INSENSITIVE), "git pull");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*暂存.*所有.*", Pattern.CASE_INSENSITIVE), "git add .");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*添加.*所有.*文件.*", Pattern.CASE_INSENSITIVE), "git add .");
+
+        // Maven/构建相关
         NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*清理.*并.*构建.*", Pattern.CASE_INSENSITIVE), "mvn clean install");
         NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*完整.*构建.*", Pattern.CASE_INSENSITIVE), "mvn clean install");
         NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*npm.*启动.*", Pattern.CASE_INSENSITIVE), "npm start");
@@ -153,6 +172,23 @@ public class DirectCommandExecutor {
         NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*跳过.*测试.*打包.*", Pattern.CASE_INSENSITIVE), "mvn clean package -DskipTests");
         NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*编译.*项目.*", Pattern.CASE_INSENSITIVE), "mvn compile");
         NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*构建.*项目.*", Pattern.CASE_INSENSITIVE), "mvn clean install");
+
+        // 简单单词命令（最常用）
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile("^构建$", Pattern.CASE_INSENSITIVE), "mvn clean install");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile("^编译$", Pattern.CASE_INSENSITIVE), "mvn compile");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile("^测试$", Pattern.CASE_INSENSITIVE), "mvn test");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile("^打包$", Pattern.CASE_INSENSITIVE), "mvn package");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile("^清理$", Pattern.CASE_INSENSITIVE), "mvn clean");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile("^安装$", Pattern.CASE_INSENSITIVE), "mvn install");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile("^运行$", Pattern.CASE_INSENSITIVE), "npm start");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile("^启动$", Pattern.CASE_INSENSITIVE), "npm start");
+
+        // 智能上下文命令
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile("^项目信息$", Pattern.CASE_INSENSITIVE), "SMART:info");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile("^推荐命令$", Pattern.CASE_INSENSITIVE), "SMART:recommend");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*项目.*信息.*", Pattern.CASE_INSENSITIVE), "SMART:info");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*推荐.*命令.*", Pattern.CASE_INSENSITIVE), "SMART:recommend");
+        NATURAL_LANGUAGE_COMMANDS.put(Pattern.compile(".*查看.*项目.*", Pattern.CASE_INSENSITIVE), "SMART:info");
     }
 
     /**
@@ -175,6 +211,11 @@ public class DirectCommandExecutor {
 
         String trimmedInput = input.trim();
 
+        // 🔥 优先检查：排除应该由 MCP/AI 处理的请求
+        if (shouldUseMCP(trimmedInput)) {
+            return false;  // 不应该直接执行，应该交给 AI/MCP
+        }
+
         // 检查直接命令模式
         for (Pattern pattern : DIRECT_COMMANDS.keySet()) {
             if (pattern.matcher(trimmedInput).matches()) {
@@ -187,6 +228,44 @@ public class DirectCommandExecutor {
             if (pattern.matcher(trimmedInput).matches()) {
                 return true;
             }
+        }
+
+        return false;
+    }
+
+    /**
+     * 判断输入是否应该使用 MCP 工具处理
+     */
+    private boolean shouldUseMCP(String input) {
+        String lowerInput = input.toLowerCase();
+
+        // GitHub 相关的关键词
+        if (lowerInput.contains("github") ||
+            lowerInput.contains("仓库") ||
+            lowerInput.contains("项目") && (lowerInput.contains("搜索") ||
+                                          lowerInput.contains("查找") ||
+                                          lowerInput.contains("查看") ||
+                                          lowerInput.contains("最火") ||
+                                          lowerInput.contains("流行") ||
+                                          lowerInput.contains("热门"))) {
+            return true;
+        }
+
+        // 文件系统操作（复杂的）
+        if ((lowerInput.contains("读取") || lowerInput.contains("写入") || lowerInput.contains("创建")) &&
+            lowerInput.contains("文件")) {
+            return true;
+        }
+
+        // 数据库查询
+        if (lowerInput.contains("sql") || lowerInput.contains("数据库") || lowerInput.contains("查询")) {
+            return true;
+        }
+
+        // 网络搜索
+        if ((lowerInput.contains("搜索") || lowerInput.contains("查找")) &&
+            (lowerInput.contains("网络") || lowerInput.contains("网页") || lowerInput.contains("互联网"))) {
+            return true;
         }
 
         return false;
@@ -225,6 +304,11 @@ public class DirectCommandExecutor {
         // 处理批量操作
         if (command.startsWith("BATCH:")) {
             return executeBatchOperation(command.substring(6));
+        }
+
+        // 处理智能上下文命令
+        if (command.startsWith("SMART:")) {
+            return executeSmartCommand(command.substring(6));
         }
 
         // 处理需要用户输入的命令
@@ -334,7 +418,8 @@ public class DirectCommandExecutor {
                     ui.displayInfo("输出:\n" + result.getOutput());
                 }
             } else {
-                ui.displayError("❌ 命令执行失败: " + result.getOutput());
+                String errorMsg = result.getError() != null ? result.getError() : result.getOutput();
+                ui.displayError("❌ 命令执行失败: " + errorMsg);
             }
 
             // 显示执行时间
@@ -370,6 +455,89 @@ public class DirectCommandExecutor {
         ui.displayWarning("⚠️  即将执行敏感命令: " + command);
         String response = ui.readInput("确认执行吗? (y/N): ");
         return "y".equalsIgnoreCase(response) || "yes".equalsIgnoreCase(response);
+    }
+
+    /**
+     * 执行智能上下文命令
+     */
+    private boolean executeSmartCommand(String smartCommand) {
+        ui.displayInfo("🧠 智能上下文: " + smartCommand);
+
+        switch (smartCommand.toLowerCase()) {
+            case "info":
+                displayProjectInfo();
+                return true;
+
+            case "recommend":
+                displayRecommendedCommands();
+                return true;
+
+            case "build":
+                String buildCmd = projectContext.getBuildCommand();
+                if (buildCmd != null) {
+                    ui.displayInfo("💡 智能识别: build → " + buildCmd);
+                    executeCommand(buildCmd);
+                    return true;
+                }
+                break;
+
+            case "test":
+                String testCmd = projectContext.getTestCommand();
+                if (testCmd != null) {
+                    ui.displayInfo("💡 智能识别: test → " + testCmd);
+                    executeCommand(testCmd);
+                    return true;
+                }
+                break;
+
+            case "clean":
+                String cleanCmd = projectContext.getCleanCommand();
+                if (cleanCmd != null) {
+                    ui.displayInfo("💡 智能识别: clean → " + cleanCmd);
+                    executeCommand(cleanCmd);
+                    return true;
+                }
+                break;
+
+            default:
+                ui.displayError("❌ 未知的智能命令: " + smartCommand);
+                return false;
+        }
+
+        ui.displayError("❌ 无法识别项目类型，无法执行智能命令");
+        return false;
+    }
+
+    /**
+     * 显示项目信息
+     */
+    private void displayProjectInfo() {
+        ui.displayInfo("🔍 项目信息:");
+        ui.displayInfo("📁 项目类型: " + projectContext.getProjectType());
+        ui.displayInfo("📂 工作目录: " + projectContext.getProjectRoot());
+
+        String buildTool = projectContext.getBuildTool();
+        if (buildTool != null) {
+            ui.displayInfo("🔧 构建工具: " + buildTool);
+        }
+
+        ui.displayInfo("\n" + projectContext.getSummary());
+    }
+
+    /**
+     * 显示推荐命令
+     */
+    private void displayRecommendedCommands() {
+        ui.displayInfo("💡 推荐命令:");
+
+        String[] recommended = projectContext.getRecommendedCommands();
+        if (recommended != null && recommended.length > 0) {
+            for (int i = 0; i < recommended.length; i++) {
+                ui.displayInfo("  " + (i + 1) + ". " + recommended[i]);
+            }
+        } else {
+            ui.displayInfo("  暂无推荐命令");
+        }
     }
 
     /**

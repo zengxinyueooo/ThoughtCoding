@@ -142,7 +142,10 @@ public class ProjectContext {
         }
     }
 
-    private String getBuildCommand() {
+    /**
+     * 获取构建命令
+     */
+    public String getBuildCommand() {
         switch (projectType) {
             case MAVEN:
                 return "mvn package";
@@ -159,7 +162,10 @@ public class ProjectContext {
         }
     }
 
-    private String getTestCommand() {
+    /**
+     * 获取测试命令
+     */
+    public String getTestCommand() {
         switch (projectType) {
             case MAVEN:
                 return "mvn test";
@@ -178,7 +184,10 @@ public class ProjectContext {
         }
     }
 
-    private String getCleanCommand() {
+    /**
+     * 获取清理命令
+     */
+    public String getCleanCommand() {
         switch (projectType) {
             case MAVEN:
                 return "mvn clean";
@@ -195,7 +204,10 @@ public class ProjectContext {
         }
     }
 
-    private String getInstallCommand() {
+    /**
+     * 获取安装依赖命令
+     */
+    public String getInstallCommand() {
         switch (projectType) {
             case MAVEN:
                 return "mvn install";
@@ -214,7 +226,10 @@ public class ProjectContext {
         }
     }
 
-    private String getRunCommand() {
+    /**
+     * 获取运行命令
+     */
+    public String getRunCommand() {
         switch (projectType) {
             case MAVEN:
                 return "mvn spring-boot:run";
@@ -234,6 +249,23 @@ public class ProjectContext {
     }
 
     /**
+     * 获取项目根目录
+     */
+    public String getProjectRoot() {
+        return workingDirectory;
+    }
+
+    /**
+     * 获取构建工具名称
+     */
+    public String getBuildTool() {
+        if (!detectedTools.isEmpty()) {
+            return detectedTools.iterator().next();
+        }
+        return null;
+    }
+
+    /**
      * 获取项目信息摘要
      */
     public String getSummary() {
@@ -249,9 +281,17 @@ public class ProjectContext {
     }
 
     /**
-     * 获取推荐命令
+     * 获取推荐命令（返回数组形式）
      */
-    public List<String> getRecommendedCommands() {
+    public String[] getRecommendedCommands() {
+        List<String> commands = getRecommendedCommandsList();
+        return commands.toArray(new String[0]);
+    }
+
+    /**
+     * 获取推荐命令（返回列表形式）
+     */
+    public List<String> getRecommendedCommandsList() {
         List<String> commands = new ArrayList<>();
 
         switch (projectType) {

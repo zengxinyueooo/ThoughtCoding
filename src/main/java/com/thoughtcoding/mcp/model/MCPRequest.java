@@ -30,9 +30,14 @@ public class MCPRequest {
         this.params = params;
     }
 
-    // 手动添加 getter 方法（如果 Lombok 不工作）
+    // 手动添加 getter 和 setter 方法（如果 Lombok 不工作）
     public String getJsonrpc() { return jsonrpc; }
     public String getId() { return id; }
     public String getMethod() { return method; }
     public Object getParams() { return params; }
+
+    public void setJsonrpc(String jsonrpc) { this.jsonrpc = jsonrpc; }
+    public void setId(String id) { this.id = id; }
+    public void setMethod(String method) { this.method = method; }
+    public void setParams(Object params) { this.params = params; }
 }

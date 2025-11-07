@@ -62,12 +62,14 @@ public class DirectCommandExecutorTest {
     @Test
     public void testRecommendedCommands() {
         // 测试推荐命令
-        var recommendations = projectContext.getRecommendedCommands();
+        String[] recommendations = projectContext.getRecommendedCommands();
         assertNotNull(recommendations, "推荐命令不应为空");
 
         System.out.println("✅ 推荐命令测试通过");
-        System.out.println("推荐命令数量: " + recommendations.size());
-        recommendations.forEach(cmd -> System.out.println("  • " + cmd));
+        System.out.println("推荐命令数量: " + recommendations.length);
+        for (String cmd : recommendations) {
+            System.out.println("  • " + cmd);
+        }
     }
 }
 

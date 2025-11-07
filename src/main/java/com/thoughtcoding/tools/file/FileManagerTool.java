@@ -31,22 +31,49 @@ public class FileManagerTool extends BaseTool {
         long startTime = System.currentTimeMillis();
 
         try {
-            // 解析输入参数（简单解析，实际应该用JSON）
-            String[] parts = input.split(" ", 2);
-            String action = parts[0].toLowerCase();
-            String path = parts.length > 1 ? parts[1] : "";
+            String action;
+            String path;
+            String content = null;
+
+            // 🔥 支持 JSON 格式输入
+            if (input.trim().startsWith("{")) {
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                java.util.Map<String, Object> params = mapper.readValue(input, java.util.Map.class);
+
+                action = (String) params.get("command");
+                if (action == null) action = (String) params.get("action");
+
+                path = (String) params.get("path");
+                content = (String) params.get("content");
+
+                if (action == null || path == null) {
+                    return error("JSON格式错误: 需要 'command'/'action' 和 'path' 字段",
+                            System.currentTimeMillis() - startTime);
+                }
+            } else {
+                // 简单字符串解析（向后兼容）
+                String[] parts = input.split(" ", 2);
+                action = parts[0].toLowerCase();
+                path = parts.length > 1 ? parts[1] : "";
+            }
+
+            action = action.toLowerCase();
 
             switch (action) {
                 case "read":
                     return readFile(path, startTime);
                 case "write":
-                    return writeFile(path, startTime);
+                    if (content == null) {
+                        return writeFile(input, startTime); // 使用旧格式
+                    } else {
+                        return writeFileWithContent(path, content, startTime);
+                    }
                 case "list":
                     return listFiles(path, startTime);
                 case "create":
                     return createDirectory(path, startTime);
                 case "delete":
-                    return deleteFile(path, startTime);
+                    return deleteFileOrDirectory(path, startTime);
                 case "info":
                     return fileInfo(path, startTime);
                 default:
@@ -55,6 +82,18 @@ public class FileManagerTool extends BaseTool {
             }
         } catch (Exception e) {
             return error("File operation failed: " + e.getMessage(), System.currentTimeMillis() - startTime);
+        }
+    }
+
+    private ToolResult writeFileWithContent(String filePath, String content, long startTime) {
+        try {
+            Path path = Paths.get(filePath).toAbsolutePath();
+            Files.createDirectories(path.getParent());
+            Files.writeString(path, content);
+            return success("File written: " + filePath + " (" + content.length() + " bytes)",
+                    System.currentTimeMillis() - startTime);
+        } catch (IOException e) {
+            return error("Failed to write file: " + e.getMessage(), System.currentTimeMillis() - startTime);
         }
     }
 
@@ -151,7 +190,7 @@ public class FileManagerTool extends BaseTool {
         }
     }
 
-    private ToolResult deleteFile(String filePath, long startTime) {
+    private ToolResult deleteFileOrDirectory(String filePath, long startTime) {
         try {
             Path path = Paths.get(filePath).toAbsolutePath();
 
@@ -159,12 +198,35 @@ public class FileManagerTool extends BaseTool {
                 return error("File or directory not found: " + filePath, System.currentTimeMillis() - startTime);
             }
 
-            Files.delete(path);
-            return success("Deleted: " + filePath, System.currentTimeMillis() - startTime);
+            // 🔥 如果是目录，递归删除
+            if (Files.isDirectory(path)) {
+                deleteDirectoryRecursively(path);
+                return success("Directory deleted: " + filePath, System.currentTimeMillis() - startTime);
+            } else {
+                Files.delete(path);
+                return success("File deleted: " + filePath, System.currentTimeMillis() - startTime);
+            }
 
         } catch (IOException e) {
             return error("Failed to delete: " + e.getMessage(), System.currentTimeMillis() - startTime);
         }
+    }
+
+    // 🔥 递归删除目录
+    private void deleteDirectoryRecursively(Path directory) throws IOException {
+        Files.walkFileTree(directory, new SimpleFileVisitor<Path>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Files.delete(file);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+                Files.delete(dir);
+                return FileVisitResult.CONTINUE;
+            }
+        });
     }
 
     private ToolResult fileInfo(String filePath, long startTime) {

@@ -217,7 +217,9 @@ public class ThoughtCodingUI {
 
     public void displayAIMessage(ChatMessage message) {
         if (message.isAssistantMessage()) {
-            terminal.writer().print(message.getContent());
+            String content = message.getContent();
+            // 流式输出每个token，使用亮青色显示（与系统信息颜色一致）
+            terminal.writer().print(AnsiColors.BRIGHT_CYAN + content + AnsiColors.RESET);
             terminal.writer().flush();
         }
     }

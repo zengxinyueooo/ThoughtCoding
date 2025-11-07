@@ -26,6 +26,14 @@ public abstract class BaseTool {
         return description;
     }
 
+    /**
+     * 🔥 获取输入参数的Schema定义（用于MCP工具）
+     * 子类可以重写此方法以提供参数schema信息给AI
+     */
+    public Object getInputSchema() {
+        return null; // 默认返回null，MCP工具可以重写
+    }
+
     protected ToolResult success(String output) {
         return ToolResult.success(output, 0);
     }

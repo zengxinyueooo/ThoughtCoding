@@ -2,6 +2,7 @@ package com.thoughtcoding.core;
 
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.config.ConfigManager;
+import com.thoughtcoding.config.MCPConfig;
 import com.thoughtcoding.mcp.MCPService;
 import com.thoughtcoding.mcp.MCPToolManager;
 import com.thoughtcoding.service.AIService;
@@ -30,6 +31,7 @@ import java.util.Map;
  */
 public class ThoughtCodingContext {
     private final AppConfig appConfig;
+    private final MCPConfig mcpConfig;
     private final AIService aiService;
     private final SessionService sessionService;
     private final ToolRegistry toolRegistry;
@@ -42,6 +44,7 @@ public class ThoughtCodingContext {
 
     private ThoughtCodingContext(Builder builder) {
         this.appConfig = builder.appConfig;
+        this.mcpConfig = builder.mcpConfig;
         this.aiService = builder.aiService;
         this.sessionService = builder.sessionService;
         this.toolRegistry = builder.toolRegistry;
@@ -58,13 +61,14 @@ public class ThoughtCodingContext {
         ConfigManager configManager = ConfigManager.getInstance();
         configManager.initialize("config.yaml");
         AppConfig appConfig = configManager.getAppConfig();
+        MCPConfig mcpConfig = configManager.getMCPConfig();
 
         // 能力层初始化,创建工具注册表
         ToolRegistry toolRegistry = new ToolRegistry(appConfig);
 
         // 🔥 创建 MCP 服务
         MCPService mcpService = new MCPService(toolRegistry);
-        MCPToolManager mcpToolManager = new MCPToolManager(mcpService);
+        MCPToolManager mcpToolManager = new MCPToolManager(mcpService, mcpConfig);
 
         // 注册内置工具 - 传递整个 AppConfig 对象
         if (appConfig.getTools().getFileManager().isEnabled()) {
@@ -84,8 +88,8 @@ public class ThoughtCodingContext {
         }
 
         // 🔥 初始化 MCP 服务（如果启用）
-        if (appConfig.getMcp() != null && appConfig.getMcp().isEnabled()) {
-            initializeMCPTools(appConfig, mcpService);
+        if (mcpConfig != null && mcpConfig.isEnabled()) {
+            initializeMCPTools(mcpConfig, mcpService, toolRegistry);
         }
 
         // 服务层初始化
@@ -99,6 +103,7 @@ public class ThoughtCodingContext {
         // 构建上下文（核心层初始化）
         return new Builder()
                 .appConfig(appConfig)
+                .mcpConfig(mcpConfig)
                 .aiService(aiService)
                 .sessionService(sessionService)
                 .toolRegistry(toolRegistry)
@@ -112,30 +117,38 @@ public class ThoughtCodingContext {
     /**
      * 🔥 初始化 MCP 工具
      */
-    public static void initializeMCPTools(AppConfig appConfig, MCPService mcpService) {
-        System.out.println("初始化 MCP 工具...");
+    public static void initializeMCPTools(MCPConfig mcpConfig, MCPService mcpService, ToolRegistry toolRegistry) {
+        System.out.println("🔧 初始化 MCP 工具...");
 
-        var mcpConfig = appConfig.getMcp();
         if (mcpConfig != null && mcpConfig.isEnabled()) {
             for (var serverConfig : mcpConfig.getServers()) {
                 if (serverConfig.isEnabled()) {
                     try {
+                        System.out.println("🔌 正在连接 MCP 服务器: " + serverConfig.getName());
+
                         // 🔥 直接传递命令和参数列表，不再创建 Map
                         var tools = mcpService.connectToServer(
                                 serverConfig.getName(),
                                 serverConfig.getCommand(),  // 直接传递命令
                                 serverConfig.getArgs()      // 直接传递参数列表
                         );
+
                         if (!tools.isEmpty()) {
-                            System.out.println("✓ MCP 服务器 " + serverConfig.getName() +
-                                    " 初始化成功 (" + tools.size() + " 个工具)");
+                            // 🔥 关键修复：将MCP工具注册到ToolRegistry
+                            for (var tool : tools) {
+                                toolRegistry.register(tool);
+                                System.out.println("  ✓ 注册工具: " + tool.getName());
+                            }
+                            System.out.println("✅ MCP 服务器 " + serverConfig.getName() +
+                                    " 初始化成功 (" + tools.size() + " 个工具已注册)");
                         } else {
-                            System.out.println("⚠ MCP 服务器 " + serverConfig.getName() +
+                            System.out.println("⚠️  MCP 服务器 " + serverConfig.getName() +
                                     " 初始化失败或未发现工具");
                         }
                     } catch (Exception e) {
-                        System.err.println("✗ MCP 服务器 " + serverConfig.getName() +
+                        System.err.println("❌ MCP 服务器 " + serverConfig.getName() +
                                 " 初始化异常: " + e.getMessage());
+                        e.printStackTrace();
                     }
                 }
             }
@@ -233,6 +246,7 @@ public class ThoughtCodingContext {
 
     // Getter方法
     public AppConfig getAppConfig() { return appConfig; }
+    public MCPConfig getMcpConfig() { return mcpConfig; }
     public AIService getAiService() { return aiService; }
     public SessionService getSessionService() { return sessionService; }
     public ToolRegistry getToolRegistry() { return toolRegistry; }
@@ -243,7 +257,7 @@ public class ThoughtCodingContext {
     public MCPService getMcpService() { return mcpService; }
     public MCPToolManager getMcpToolManager() { return mcpToolManager; }
     public boolean isMCPEnabled() {
-        return appConfig.getMcp() != null && appConfig.getMcp().isEnabled();
+        return mcpConfig != null && mcpConfig.isEnabled();
     }
     public int getMCPToolCount() {
         return mcpService != null ? mcpService.getMCPTools().size() : 0;
@@ -252,6 +266,7 @@ public class ThoughtCodingContext {
     // Builder模式
     public static class Builder {
         private AppConfig appConfig;
+        private MCPConfig mcpConfig;
         private AIService aiService;
         private SessionService sessionService;
         private ToolRegistry toolRegistry;
@@ -263,6 +278,11 @@ public class ThoughtCodingContext {
 
         public Builder appConfig(AppConfig appConfig) {
             this.appConfig = appConfig;
+            return this;
+        }
+
+        public Builder mcpConfig(MCPConfig mcpConfig) {
+            this.mcpConfig = mcpConfig;
             return this;
         }
 

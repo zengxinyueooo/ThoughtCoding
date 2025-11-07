@@ -36,14 +36,14 @@ public class QuickTest {
             // 测试 3: 推荐命令
             System.out.println("💡 测试 3: 推荐命令");
             System.out.println("----------------------------");
-            var recommendations = context.getRecommendedCommands();
-            if (recommendations.isEmpty()) {
+            String[] recommendations = context.getRecommendedCommands();
+            if (recommendations == null || recommendations.length == 0) {
                 System.out.println("⚠️  未检测到项目类型，无推荐命令");
             } else {
                 for (String rec : recommendations) {
                     System.out.println("  • " + rec);
                 }
-                System.out.println("✅ 测试通过 (共 " + recommendations.size() + " 条推荐)\n");
+                System.out.println("✅ 测试通过 (共 " + recommendations.length + " 条推荐)\n");
             }
 
             // 测试 4: 自然语言模式识别（模拟）

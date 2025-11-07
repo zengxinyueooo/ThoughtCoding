@@ -1,7 +1,6 @@
 package com.thoughtcoding.service;
 
 import com.thoughtcoding.config.AppConfig;
-import com.thoughtcoding.core.StreamingOutput;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.tools.ToolRegistry;
@@ -32,6 +31,10 @@ public class LangChainService implements AIService {
     private Consumer<ToolCall> toolCallHandler;
     private StreamingChatLanguageModel streamingChatModel;
 
+    // 用于跟踪生成状态
+    private volatile boolean isGenerating = false;
+    private volatile boolean shouldStop = false;
+
     public LangChainService(AppConfig appConfig, ToolRegistry toolRegistry) {
         this.appConfig = appConfig;
         this.toolRegistry = toolRegistry;
@@ -44,12 +47,8 @@ public class LangChainService implements AIService {
             AppConfig.ModelConfig modelConfig = appConfig.getModelConfig(appConfig.getDefaultModel());
             if (modelConfig != null) {
                 this.streamingChatModel = createDeepSeekModel(modelConfig);
-                //System.out.println("✅ DeepSeek streaming model initialized successfully");
-            } else {
-                //System.err.println("❌ Model configuration not found for: " + appConfig.getDefaultModel());
             }
         } catch (Exception e) {
-           // System.err.println("❌ Failed to initialize DeepSeek model: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -68,7 +67,6 @@ public class LangChainService implements AIService {
 
     @Override
     public List<ChatMessage> chat(String input, List<ChatMessage> history, String modelName) {
-        // 非流式聊天 - 如果需要的话
         throw new UnsupportedOperationException("Use streamingChat for real AI service");
     }
 
@@ -82,8 +80,12 @@ public class LangChainService implements AIService {
             throw new IllegalStateException("DeepSeek model not initialized. Please check your configuration.");
         }
 
-        // 使用StreamingOutput来管理累积逻辑
-        StreamingOutput streamingOutput = new StreamingOutput(messageHandler);
+        // 设置生成状态
+        isGenerating = true;
+        shouldStop = false;
+
+        // 用于累积完整的AI响应
+        final StringBuilder fullResponse = new StringBuilder();
 
         try {
             // 准备消息
@@ -91,61 +93,87 @@ public class LangChainService implements AIService {
 
             System.out.println("🚀 Sending request to DeepSeek API...");
 
-            // 执行真实的流式调用 - 使用正确的StreamingResponseHandler
+            // 执行流式调用
             streamingChatModel.generate(messages, new StreamingResponseHandler<AiMessage>() {
                 @Override
                 public void onNext(String token) {
-                    // 实时输出每个token
-                    streamingOutput.appendContent(token);
+                    // 检查是否需要停止
+                    if (shouldStop) {
+                        return;
+                    }
+
+                    // 累积完整响应
+                    fullResponse.append(token);
+
+                    // 实时发送每个token给UI显示（不添加到历史记录）
+                    ChatMessage tokenMessage = new ChatMessage("assistant", token);
+                    messageHandler.accept(tokenMessage);
                 }
 
                 @Override
                 public void onComplete(Response<dev.langchain4j.data.message.AiMessage> response) {
-                    // 流式输出完成
-                    streamingOutput.complete();
+                    try {
+                        // 检查是否被用户停止
+                        if (shouldStop && fullResponse.length() > 0) {
+                            // 添加被截断的响应到历史记录
+                            ChatMessage truncatedMessage = new ChatMessage("assistant",
+                                fullResponse.toString() + "\n\n💡 [生成已被用户停止]");
+                            history.add(truncatedMessage);
+                            return;
+                        }
 
-                    // 输出token使用情况
-                    TokenUsage tokenUsage = response.tokenUsage();
-                    if (tokenUsage != null) {
-                        System.out.println("\n📊 Token usage - Input: " + tokenUsage.inputTokenCount() +
-                                ", Output: " + tokenUsage.outputTokenCount() +
-                                ", Total: " + tokenUsage.totalTokenCount());
+                        // 正常完成：将完整的AI响应添加到历史记录
+                        if (fullResponse.length() > 0) {
+                            ChatMessage completeMessage = new ChatMessage("assistant", fullResponse.toString());
+                            history.add(completeMessage);
+                        }
+
+                        // 输出一个换行，让提示符在新行显示
+                        System.out.println();
+                    } finally {
+                        // 重置生成状态
+                        isGenerating = false;
+                        shouldStop = false;
                     }
-
-                    //System.out.println("✅ DeepSeek response completed");
                 }
 
                 @Override
                 public void onError(Throwable error) {
-                    streamingOutput.reset();
-                    System.err.println("❌ DeepSeek API error: " + error.getMessage());
+                    try {
+                        System.err.println("❌ DeepSeek API error: " + error.getMessage());
 
-                    // 发送错误消息
-                    ChatMessage errorMessage = new ChatMessage("assistant",
-                            "抱歉，我在处理您的请求时遇到了问题： " + error.getMessage());
-                    messageHandler.accept(errorMessage);
+                        // 发送错误消息
+                        ChatMessage errorMessage = new ChatMessage("assistant",
+                                "抱歉，我在处理您的请求时遇到了问题： " + error.getMessage());
+                        messageHandler.accept(errorMessage);
+                        history.add(errorMessage);
+                    } finally {
+                        // 重置生成状态
+                        isGenerating = false;
+                        shouldStop = false;
+                    }
                 }
             });
 
         } catch (Exception e) {
-            streamingOutput.reset();
+            isGenerating = false;
+            shouldStop = false;
+
             System.err.println("❌ Service error: " + e.getMessage());
             e.printStackTrace();
 
             ChatMessage errorMessage = new ChatMessage("assistant",
                     "服务暂时不可用，请稍后重试。错误信息: " + e.getMessage());
             messageHandler.accept(errorMessage);
+            history.add(errorMessage);
         }
+
         return history;
     }
-
 
     private List<dev.langchain4j.data.message.ChatMessage> prepareMessages(
             String input, List<ChatMessage> history) {
         List<dev.langchain4j.data.message.ChatMessage> messages = new ArrayList<>();
-
-        // 添加系统消息（可选）
-        // messages.add(SystemMessage.from("你是一个专业的编程助手，专门帮助解决编程问题。"));
 
         // 添加历史消息
         if (history != null && !history.isEmpty()) {
@@ -192,4 +220,23 @@ public class LangChainService implements AIService {
     public List<String> getAvailableModels() {
         return new ArrayList<>(appConfig.getModels().keySet());
     }
+
+    /**
+     * 检查当前是否正在生成响应
+     * @return true 如果正在生成，false 否则
+     */
+    public boolean isGenerating() {
+        return isGenerating;
+    }
+
+    /**
+     * 停止当前正在进行的生成
+     */
+    public void stopCurrentGeneration() {
+        if (isGenerating) {
+            shouldStop = true;
+            System.out.println("⏸️  正在停止生成...");
+        }
+    }
 }
+

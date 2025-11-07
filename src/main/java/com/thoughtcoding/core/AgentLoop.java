@@ -78,11 +78,12 @@ public class AgentLoop {
 
 
     private void handleMessage(ChatMessage message) {
-        // 显示AI消息
+        // 显示AI消息（用于流式输出的实时显示）
         context.getUi().displayAIMessage(message);
 
-        // 添加到历史
-        history.add(message);
+        // 注意：不在这里添加到历史记录
+        // LangChainService 会在流式输出完成后，将完整的AI响应添加到历史记录
+        // 这样可以避免历史记录中出现大量零散的 token 消息
     }
 
     private void handleToolCall(ToolCall toolCall) {
