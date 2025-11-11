@@ -6,6 +6,7 @@ import com.thoughtcoding.config.MCPConfig;
 import com.thoughtcoding.mcp.MCPService;
 import com.thoughtcoding.mcp.MCPToolManager;
 import com.thoughtcoding.service.AIService;
+import com.thoughtcoding.service.ContextManager;
 import com.thoughtcoding.service.LangChainService;
 import com.thoughtcoding.service.PerformanceMonitor;
 import com.thoughtcoding.service.SessionService;
@@ -42,6 +43,9 @@ public class ThoughtCodingContext {
     private final MCPService mcpService;
     private final MCPToolManager mcpToolManager;
 
+    // 🔥 新增上下文管理器
+    private final ContextManager contextManager;
+
     private ThoughtCodingContext(Builder builder) {
         this.appConfig = builder.appConfig;
         this.mcpConfig = builder.mcpConfig;
@@ -52,6 +56,7 @@ public class ThoughtCodingContext {
         this.performanceMonitor = builder.performanceMonitor;
         this.mcpService = builder.mcpService;
         this.mcpToolManager = builder.mcpToolManager;
+        this.contextManager = builder.contextManager;
     }
 
     public static ThoughtCodingContext initialize() {
@@ -93,7 +98,8 @@ public class ThoughtCodingContext {
         }
 
         // 服务层初始化
-        AIService aiService = new LangChainService(appConfig, toolRegistry);
+        ContextManager contextManager = new ContextManager(appConfig);  // 🔥 创建上下文管理器
+        AIService aiService = new LangChainService(appConfig, toolRegistry, contextManager);  // 🔥 注入 contextManager
         SessionService sessionService = new SessionService();
         PerformanceMonitor performanceMonitor = new PerformanceMonitor();
 
@@ -111,6 +117,7 @@ public class ThoughtCodingContext {
                 .performanceMonitor(performanceMonitor)
                 .mcpService(mcpService)
                 .mcpToolManager(mcpToolManager)
+                .contextManager(contextManager)  // 🔥 添加 contextManager
                 .build();
     }
 
@@ -250,6 +257,9 @@ public class ThoughtCodingContext {
     public AIService getAiService() { return aiService; }
     public SessionService getSessionService() { return sessionService; }
     public ToolRegistry getToolRegistry() { return toolRegistry; }
+
+    // 🔥 新增 contextManager Getter
+    public ContextManager getContextManager() { return contextManager; }
     public ThoughtCodingUI getUi() { return ui; }
     public PerformanceMonitor getPerformanceMonitor() { return performanceMonitor; }
 
@@ -275,6 +285,8 @@ public class ThoughtCodingContext {
         // 🔥 新增 MCP 字段
         private MCPService mcpService;
         private MCPToolManager mcpToolManager;
+        // 🔥 新增上下文管理器字段
+        private ContextManager contextManager;
 
         public Builder appConfig(AppConfig appConfig) {
             this.appConfig = appConfig;
@@ -319,6 +331,12 @@ public class ThoughtCodingContext {
 
         public Builder mcpToolManager(MCPToolManager mcpToolManager) {
             this.mcpToolManager = mcpToolManager;
+            return this;
+        }
+
+        // 🔥 新增 contextManager Builder 方法
+        public Builder contextManager(ContextManager contextManager) {
+            this.contextManager = contextManager;
             return this;
         }
 

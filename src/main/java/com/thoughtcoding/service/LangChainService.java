@@ -27,6 +27,7 @@ import java.util.stream.Collectors;
 public class LangChainService implements AIService {
     private final AppConfig appConfig;
     private final ToolRegistry toolRegistry;
+    private final ContextManager contextManager;  // 🔥 新增上下文管理器
     private Consumer<ChatMessage> messageHandler;
     private Consumer<ToolCall> toolCallHandler;
     private StreamingChatLanguageModel streamingChatModel;
@@ -35,9 +36,10 @@ public class LangChainService implements AIService {
     private volatile boolean isGenerating = false;
     private volatile boolean shouldStop = false;
 
-    public LangChainService(AppConfig appConfig, ToolRegistry toolRegistry) {
+    public LangChainService(AppConfig appConfig, ToolRegistry toolRegistry, ContextManager contextManager) {
         this.appConfig = appConfig;
         this.toolRegistry = toolRegistry;
+        this.contextManager = contextManager;  // 🔥 注入上下文管理器
         initializeChatModel();
     }
 
@@ -175,9 +177,23 @@ public class LangChainService implements AIService {
             String input, List<ChatMessage> history) {
         List<dev.langchain4j.data.message.ChatMessage> messages = new ArrayList<>();
 
+        // 🔥 新增：首先添加固定的项目上下文（永远不会被截断）
+        if (contextManager != null) {
+            ChatMessage projectContext = contextManager.buildProjectContextMessage();
+            if (projectContext != null) {
+                messages.add(dev.langchain4j.data.message.SystemMessage.from(projectContext.getContent()));
+            }
+        }
+
+        // 🔥 应用上下文管理策略（防止历史过长）
+        List<ChatMessage> managedHistory = history;
+        if (contextManager != null && history != null && !history.isEmpty()) {
+            managedHistory = contextManager.getContextForAI(history);
+        }
+
         // 添加历史消息
-        if (history != null && !history.isEmpty()) {
-            messages.addAll(convertToLangChainHistory(history));
+        if (managedHistory != null && !managedHistory.isEmpty()) {
+            messages.addAll(convertToLangChainHistory(managedHistory));
         }
 
         // 添加当前用户消息
