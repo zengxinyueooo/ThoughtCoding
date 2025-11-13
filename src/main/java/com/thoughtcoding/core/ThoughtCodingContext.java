@@ -125,39 +125,39 @@ public class ThoughtCodingContext {
      * 🔥 初始化 MCP 工具
      */
     public static void initializeMCPTools(MCPConfig mcpConfig, MCPService mcpService, ToolRegistry toolRegistry) {
-        System.out.println("🔧 初始化 MCP 工具...");
+        // 🔥 简化输出：只在最后显示汇总信息
 
         if (mcpConfig != null && mcpConfig.isEnabled()) {
+            int totalTools = 0;
+            int successServers = 0;
+
             for (var serverConfig : mcpConfig.getServers()) {
                 if (serverConfig.isEnabled()) {
                     try {
-                        System.out.println("🔌 正在连接 MCP 服务器: " + serverConfig.getName());
-
-                        // 🔥 直接传递命令和参数列表，不再创建 Map
+                        // 静默连接，不输出中间过程
                         var tools = mcpService.connectToServer(
                                 serverConfig.getName(),
-                                serverConfig.getCommand(),  // 直接传递命令
-                                serverConfig.getArgs()      // 直接传递参数列表
+                                serverConfig.getCommand(),
+                                serverConfig.getArgs()
                         );
 
                         if (!tools.isEmpty()) {
-                            // 🔥 关键修复：将MCP工具注册到ToolRegistry
+                            // 注册工具（静默）
                             for (var tool : tools) {
                                 toolRegistry.register(tool);
-                                System.out.println("  ✓ 注册工具: " + tool.getName());
                             }
-                            System.out.println("✅ MCP 服务器 " + serverConfig.getName() +
-                                    " 初始化成功 (" + tools.size() + " 个工具已注册)");
-                        } else {
-                            System.out.println("⚠️  MCP 服务器 " + serverConfig.getName() +
-                                    " 初始化失败或未发现工具");
+                            totalTools += tools.size();
+                            successServers++;
                         }
                     } catch (Exception e) {
-                        System.err.println("❌ MCP 服务器 " + serverConfig.getName() +
-                                " 初始化异常: " + e.getMessage());
-                        e.printStackTrace();
+                        System.err.println("❌ 无法连接到 " + serverConfig.getName() + ": " + e.getMessage());
                     }
                 }
+            }
+
+            // 只输出一行汇总信息
+            if (successServers > 0) {
+                System.out.println("✅ 已加载 " + totalTools + " 个工具");
             }
         }
     }

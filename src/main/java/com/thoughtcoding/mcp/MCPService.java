@@ -31,8 +31,8 @@ public class MCPService {
     // 🔥 新增3参数方法
     public List<BaseTool> connectToServer(String serverName, String command, List<String> args) {
         try {
-            log.info("启动MCP服务器: {} - {}", serverName, command);
-            log.info("参数: {}", args);
+            log.debug("启动MCP服务器: {} - {}", serverName, command);
+            log.debug("参数: {}", args);
 
             // 清理旧连接
             if (clients.containsKey(serverName)) {
@@ -61,10 +61,10 @@ public class MCPService {
                     mcpTools.put(toolKey, baseTools.get(i));
                 }
 
-                log.info("✅ 成功连接MCP服务器: {} ({} 个工具)", serverName, baseTools.size());
+                log.debug("✅ 成功连接MCP服务器: {} ({} 个工具)", serverName, baseTools.size());
                 return baseTools;
             } else {
-                log.warn("⚠️ 连接MCP服务器失败: {}", serverName);
+                log.debug("⚠️ 连接MCP服务器失败: {}", serverName);
                 return Collections.emptyList();
             }
         } catch (Exception e) {
@@ -171,13 +171,13 @@ public class MCPService {
                 if (shouldRemove) {
                     // 根据你的 ToolRegistry 实现，可能需要不同的取消注册方法
                     // 如果没有 unregister 方法，可能需要其他方式处理
-                    log.info("移除MCP工具: {}", entry.getKey());
+                    log.debug("移除MCP工具: {}", entry.getKey());
                 }
                 return shouldRemove;
             });
 
             client.disconnect();
-            log.info("已断开MCP服务器: {}", serverName);
+            log.debug("已断开MCP服务器: {}", serverName);
         }
     }
 

@@ -102,25 +102,39 @@ public class ContextManager {
             }
 
             StringBuilder context = new StringBuilder();
+            context.append("## 📋 重要指令\n\n");
+            context.append("⚠️ **你必须始终使用中文回答用户的所有问题！**\n");
+            context.append("⚠️ **所有的解释、说明、代码注释都必须使用中文！**\n\n");
             context.append("## 🏠 当前工作环境\n\n");
             context.append("工作目录: ").append(cwd).append("\n\n");
 
             context.append("### 📋 文件系统访问权限\n");
             context.append("1. 你拥有文件系统访问权限，可以使用 read_file 和 list_directory 等工具\n");
-            context.append("2. 当用户提到「这个项目」、「当前项目」或提供路径时，应该主动使用工具读取文件\n");
-            context.append("3. 不要让用户手动提供文件内容，你应该自己去读取\n");
+            context.append("2. **仅在用户明确要求分析、读取或修改现有项目文件时才使用工具**\n");
+            context.append("3. 如果用户只是要求「生成代码」、「写一个程序」等，直接输出代码即可，**不要使用工具**\n");
             context.append("4. 支持绝对路径和相对路径（相对于上述工作目录）\n");
-            context.append("5. 遇到项目分析请求时，优先读取 README.md、pom.xml、package.json 等关键文件\n\n");
+            context.append("5. 遇到明确的项目分析请求时，再使用工具读取 README.md、pom.xml、package.json 等关键文件\n\n");
 
-            context.append("### ⚠️ 输出格式要求（重要！）\n");
-            context.append("1. 不要输出你的思考过程（如 \"让我先...\"、\"我来...\"）\n");
-            context.append("2. 不要输出代码块（如 ```python、```java 等）\n");
-            context.append("3. 不要输出你想要执行的工具调用代码\n");
-            context.append("4. 使用纯文本格式输出，可以使用简单的符号（如 -、•、数字）作为列表标记\n");
-            context.append("5. 直接给出分析结果，工具调用会自动在后台执行\n");
-            context.append("6. 如果需要结构化输出，使用缩进和换行，不要使用 Markdown 语法\n\n");
-
-            context.append("记住：你有权限也有责任主动探索文件系统，但不要把执行过程展示给用户！\n");
+            context.append("### 🔧 文件创建说明（重要！）\n");
+            context.append("**当用户要求生成/创建/写代码时，直接输出代码，不要先调用工具！**\n\n");
+            context.append("使用以下格式：\n\n");
+            context.append("1. 先用自然语言说明你的意图\n");
+            context.append("2. 然后在代码块中提供文件内容\n");
+            context.append("3. 在代码块前后明确说明文件名\n\n");
+            context.append("示例（正确格式）：\n");
+            context.append("```\n");
+            context.append("好的，我来帮你创建一个Java Hello World程序。\n\n");
+            context.append("文件名：HelloWorld.java\n\n");
+            context.append("```java\n");
+            context.append("public class HelloWorld {\n");
+            context.append("    public static void main(String[] args) {\n");
+            context.append("        System.out.println(\"Hello, World!\");\n");
+            context.append("    }\n");
+            context.append("}\n");
+            context.append("```\n");
+            context.append("```\n\n");
+            context.append("⚠️ 不要输出任何形如 write_file \"...\" \"...\" 的命令格式！\n");
+            context.append("⚠️ 系统会自动检测代码块并提示用户确认创建文件！\n\n");
 
             return new ChatMessage("system", context.toString());
         } catch (Exception e) {

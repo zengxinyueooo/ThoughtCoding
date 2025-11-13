@@ -31,6 +31,11 @@ public class ThoughtCodingUI {
     public Terminal getTerminal() {
         return terminal;
     }
+
+    public LineReader getLineReader() {
+        return lineReader;
+    }
+
     public ThoughtCodingUI() {
         try {
             // 初始化JLine终端

@@ -15,30 +15,8 @@ public class ToolDisplay {
     }
 
     public void displayToolCall(ToolCall toolCall) {
-        String statusIcon = toolCall.isSuccess() ? "✅" : "❌";
-        String statusColor = toolCall.isSuccess() ? AnsiColors.BRIGHT_GREEN : AnsiColors.BRIGHT_RED;
-        String statusText = toolCall.isSuccess() ? "SUCCESS" : "FAILED";
-
-        String header = String.format("%s%s Tool Call: %s%s %s(%s - %dms)%s",
-                AnsiColors.BRIGHT_MAGENTA, "🛠️",
-                AnsiColors.BRIGHT_WHITE, toolCall.getToolName(),
-                statusColor, statusText, toolCall.getExecutionTime(), AnsiColors.RESET);
-
-        terminal.writer().println(header);
-
-        // 显示参数
-        if (toolCall.getParameters() != null && !toolCall.getParameters().isEmpty()) {
-            terminal.writer().println(AnsiColors.BRIGHT_BLACK + "  Parameters: " + toolCall.getParameters() + AnsiColors.RESET);
-        }
-
-        // 显示结果
-        if (toolCall.getResult() != null) {
-            String resultColor = toolCall.isSuccess() ? AnsiColors.BRIGHT_GREEN : AnsiColors.BRIGHT_RED;
-            terminal.writer().println(resultColor + "  Result: " + toolCall.getResult() + AnsiColors.RESET);
-        }
-
-        terminal.writer().println();
-        terminal.writer().flush();
+        // 🔥 不再显示调试信息，保持界面简洁
+        // 工具调用的详细信息已经在确认界面显示过了
     }
 
     public void displayToolStart(String toolName) {

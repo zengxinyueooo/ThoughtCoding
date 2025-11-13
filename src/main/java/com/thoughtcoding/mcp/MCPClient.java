@@ -51,8 +51,8 @@ public class MCPClient {
                 }
             }
 
-            log.info("完整命令: {}", String.join(" ", commandList));
-            log.info("工作目录: {}", System.getProperty("user.dir"));
+            log.debug("完整命令: {}", String.join(" ", commandList));
+            log.debug("工作目录: {}", System.getProperty("user.dir"));
 
             ProcessBuilder pb = new ProcessBuilder(commandList);
             pb.directory(new File(System.getProperty("user.dir")));
@@ -68,7 +68,7 @@ public class MCPClient {
             writer = new BufferedWriter(new OutputStreamWriter(process.getOutputStream()));
 
             // 等待进程启动
-            log.info("⏳ 等待 MCP 服务器启动...");
+            log.debug("⏳ 等待 MCP 服务器启动...");
             Thread.sleep(2000);
 
             if (!process.isAlive()) {
@@ -77,12 +77,12 @@ public class MCPClient {
                 return false;
             }
 
-            log.info("✅ MCP 进程已启动，开始协议初始化...");
+            log.debug("✅ MCP 进程已启动，开始协议初始化...");
 
             if (initializeProtocol()) {
                 listTools();
                 initialized = true;
-                log.info("✅ MCP客户端初始化成功: {} ({} 个工具)", serverName, availableTools.size());
+                log.debug("✅ MCP客户端初始化成功: {} ({} 个工具)", serverName, availableTools.size());
                 return true;
             } else {
                 log.error("❌ MCP 协议初始化失败");
@@ -146,26 +146,26 @@ public class MCPClient {
             clientInfo.put("version", "1.0.0");
             params.put("clientInfo", clientInfo);
 
-            log.info("发送初始化请求...");
+            log.debug("发送初始化请求...");
 
             // 使用 MCPRequest 确保正确序列化
             MCPRequest request = new MCPRequest("initialize", params);
             request.setId("1");  // 使用字符串 ID
 
             String json = objectMapper.writeValueAsString(request);
-            log.info("发送的JSON: {}", json);
+            log.debug("发送的JSON: {}", json);
             writer.write(json);
             writer.newLine();
             writer.flush();
 
             // 读取并记录所有输出，用于调试
-            log.info("等待MCP服务器响应...");
+            log.debug("等待MCP服务器响应...");
             MCPResponse response = readResponse(15000);
 
             if (response != null) {
-                log.info("收到初始化响应: {}", response);
+                log.debug("收到初始化响应: {}", response);
                 if (response.getError() == null) {
-                    log.info("✅ MCP协议初始化成功");
+                    log.debug("✅ MCP协议初始化成功");
                     return true;
                 } else {
                     log.error("❌ MCP协议初始化错误: {}", response.getError().getMessage());
@@ -241,7 +241,7 @@ public class MCPClient {
         long startTime = System.currentTimeMillis();
         int attemptCount = 0;
 
-        log.info("⏳ 开始等待响应，超时时间: {}ms", timeoutMs);
+        log.debug("⏳ 开始等待响应，超时时间: {}ms", timeoutMs);
 
         while (System.currentTimeMillis() - startTime < timeoutMs) {
             try {
@@ -260,12 +260,12 @@ public class MCPClient {
                     if (line != null) {
                         line = line.trim();
                         if (!line.isEmpty()) {
-                            log.info("📨 收到数据 [尝试#{}]: {}", attemptCount, line);
+                            log.debug("📨 收到数据 [尝试#{}]: {}", attemptCount, line);
 
                             // 尝试解析为 JSON
                             try {
                                 MCPResponse response = objectMapper.readValue(line, MCPResponse.class);
-                                log.info("✅ 成功解析MCP响应 (耗时: {}ms)", System.currentTimeMillis() - startTime);
+                                log.debug("✅ 成功解析MCP响应 (耗时: {}ms)", System.currentTimeMillis() - startTime);
                                 return response;
                             } catch (Exception e) {
                                 log.warn("⚠️ 响应不是有效JSON，继续等待: {}", line);

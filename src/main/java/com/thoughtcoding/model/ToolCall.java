@@ -10,27 +10,38 @@ import java.util.Map;
 public class ToolCall {
     private final String id;
     private final String toolName;
+    private final String description;
     private final Map<String, Object> parameters;
     private final String result;
     private final boolean success;
     private final long executionTime;
+    private final boolean streamingTriggered;  // 🔥 新增：标记是否是流式触发的工具调用
 
     public ToolCall(String toolName, Map<String, Object> parameters, String result, boolean success, long executionTime) {
+        this(toolName, parameters, result, success, executionTime, false);
+    }
+
+    // 🔥 新增：支持 streamingTriggered 参数的构造函数
+    public ToolCall(String toolName, Map<String, Object> parameters, String result, boolean success, long executionTime, boolean streamingTriggered) {
         this.id = java.util.UUID.randomUUID().toString();
         this.toolName = toolName;
+        this.description = "执行 " + toolName + " 工具";
         this.parameters = parameters;
         this.result = result;
         this.success = success;
         this.executionTime = executionTime;
+        this.streamingTriggered = streamingTriggered;
     }
 
     // Getters
     public String getId() { return id; }
     public String getToolName() { return toolName; }
+    public String getDescription() { return description; }
     public Map<String, Object> getParameters() { return parameters; }
     public String getResult() { return result; }
     public boolean isSuccess() { return success; }
     public long getExecutionTime() { return executionTime; }
+    public boolean isStreamingTriggered() { return streamingTriggered; }  // 🔥 新增 getter
 
     @Override
     public String toString() {
