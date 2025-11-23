@@ -31,22 +31,49 @@ public class FileManagerTool extends BaseTool {
         long startTime = System.currentTimeMillis();
 
         try {
-            // 解析输入参数（简单解析，实际应该用JSON）
-            String[] parts = input.split(" ", 2);
-            String action = parts[0].toLowerCase();
-            String path = parts.length > 1 ? parts[1] : "";
+            String action;
+            String path;
+            String content = null;
+
+            // 🔥 支持 JSON 格式输入
+            if (input.trim().startsWith("{")) {
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                java.util.Map<String, Object> params = mapper.readValue(input, java.util.Map.class);
+
+                action = (String) params.get("command");
+                if (action == null) action = (String) params.get("action");
+
+                path = (String) params.get("path");
+                content = (String) params.get("content");
+
+                if (action == null || path == null) {
+                    return error("JSON格式错误: 需要 'command'/'action' 和 'path' 字段",
+                            System.currentTimeMillis() - startTime);
+                }
+            } else {
+                // 简单字符串解析（向后兼容）
+                String[] parts = input.split(" ", 2);
+                action = parts[0].toLowerCase();
+                path = parts.length > 1 ? parts[1] : "";
+            }
+
+            action = action.toLowerCase();
 
             switch (action) {
                 case "read":
                     return readFile(path, startTime);
                 case "write":
-                    return writeFile(path, startTime);
+                    if (content == null) {
+                        return writeFile(input, startTime); // 使用旧格式
+                    } else {
+                        return writeFileWithContent(path, content, startTime);
+                    }
                 case "list":
                     return listFiles(path, startTime);
                 case "create":
                     return createDirectory(path, startTime);
                 case "delete":
-                    return deleteFile(path, startTime);
+                    return deleteFileOrDirectory(path, startTime);
                 case "info":
                     return fileInfo(path, startTime);
                 default:
@@ -58,9 +85,23 @@ public class FileManagerTool extends BaseTool {
         }
     }
 
+    private ToolResult writeFileWithContent(String filePath, String content, long startTime) {
+        try {
+            String expandedPath = expandUserHome(filePath);
+            Path path = Paths.get(expandedPath).toAbsolutePath();
+            Files.createDirectories(path.getParent());
+            Files.writeString(path, content);
+            return success("File written: " + filePath + " (" + content.length() + " bytes)",
+                    System.currentTimeMillis() - startTime);
+        } catch (IOException e) {
+            return error("Failed to write file: " + e.getMessage(), System.currentTimeMillis() - startTime);
+        }
+    }
+
     private ToolResult readFile(String filePath, long startTime) {
         try {
-            Path path = Paths.get(filePath).toAbsolutePath();
+            String expandedPath = expandUserHome(filePath);
+            Path path = Paths.get(expandedPath).toAbsolutePath();
 
             if (!Files.exists(path)) {
                 return error("File not found: " + filePath, System.currentTimeMillis() - startTime);
@@ -94,7 +135,8 @@ public class FileManagerTool extends BaseTool {
             String filePath = parts[0];
             String content = parts[1];
 
-            Path path = Paths.get(filePath).toAbsolutePath();
+            String expandedPath = expandUserHome(filePath);
+            Path path = Paths.get(expandedPath).toAbsolutePath();
 
             // 确保父目录存在
             Files.createDirectories(path.getParent());
@@ -110,7 +152,8 @@ public class FileManagerTool extends BaseTool {
 
     private ToolResult listFiles(String directoryPath, long startTime) {
         try {
-            Path path = Paths.get(directoryPath.isEmpty() ? "." : directoryPath).toAbsolutePath();
+            String expandedPath = expandUserHome(directoryPath.isEmpty() ? "." : directoryPath);
+            Path path = Paths.get(expandedPath).toAbsolutePath();
 
             if (!Files.exists(path)) {
                 return error("Directory not found: " + path, System.currentTimeMillis() - startTime);
@@ -143,7 +186,8 @@ public class FileManagerTool extends BaseTool {
 
     private ToolResult createDirectory(String dirPath, long startTime) {
         try {
-            Path path = Paths.get(dirPath).toAbsolutePath();
+            String expandedPath = expandUserHome(dirPath);
+            Path path = Paths.get(expandedPath).toAbsolutePath();
             Files.createDirectories(path);
             return success("Directory created: " + path, System.currentTimeMillis() - startTime);
         } catch (IOException e) {
@@ -151,25 +195,50 @@ public class FileManagerTool extends BaseTool {
         }
     }
 
-    private ToolResult deleteFile(String filePath, long startTime) {
+    private ToolResult deleteFileOrDirectory(String filePath, long startTime) {
         try {
-            Path path = Paths.get(filePath).toAbsolutePath();
+            String expandedPath = expandUserHome(filePath);
+            Path path = Paths.get(expandedPath).toAbsolutePath();
 
             if (!Files.exists(path)) {
                 return error("File or directory not found: " + filePath, System.currentTimeMillis() - startTime);
             }
 
-            Files.delete(path);
-            return success("Deleted: " + filePath, System.currentTimeMillis() - startTime);
+            // 🔥 如果是目录，递归删除
+            if (Files.isDirectory(path)) {
+                deleteDirectoryRecursively(path);
+                return success("Directory deleted: " + filePath, System.currentTimeMillis() - startTime);
+            } else {
+                Files.delete(path);
+                return success("File deleted: " + filePath, System.currentTimeMillis() - startTime);
+            }
 
         } catch (IOException e) {
             return error("Failed to delete: " + e.getMessage(), System.currentTimeMillis() - startTime);
         }
     }
 
+    // 🔥 递归删除目录
+    private void deleteDirectoryRecursively(Path directory) throws IOException {
+        Files.walkFileTree(directory, new SimpleFileVisitor<Path>() {
+            @Override
+            public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                Files.delete(file);
+                return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+                Files.delete(dir);
+                return FileVisitResult.CONTINUE;
+            }
+        });
+    }
+
     private ToolResult fileInfo(String filePath, long startTime) {
         try {
-            Path path = Paths.get(filePath).toAbsolutePath();
+            String expandedPath = expandUserHome(filePath);
+            Path path = Paths.get(expandedPath).toAbsolutePath();
 
             if (!Files.exists(path)) {
                 return error("File not found: " + filePath, System.currentTimeMillis() - startTime);
@@ -199,5 +268,27 @@ public class FileManagerTool extends BaseTool {
     @Override
     public boolean isEnabled() {
         return appConfig.getTools().getFileManager().isEnabled();
+    }
+
+    /**
+     * 🔥 展开路径中的 ~ 符号为用户主目录
+     * 例如：~/Desktop -> /Users/username/Desktop
+     */
+    private String expandUserHome(String path) {
+        if (path == null || path.isEmpty()) {
+            return path;
+        }
+
+        // 如果路径以 ~ 开头，替换为用户主目录
+        if (path.startsWith("~/") || path.equals("~")) {
+            String userHome = System.getProperty("user.home");
+            if (path.equals("~")) {
+                return userHome;
+            } else {
+                return userHome + path.substring(1);
+            }
+        }
+
+        return path;
     }
 }

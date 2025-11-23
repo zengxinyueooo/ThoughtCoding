@@ -51,132 +51,129 @@ public class MCPClient {
                 }
             }
 
-            log.info("完整命令: {}", String.join(" ", commandList));
-            log.info("工作目录: {}", System.getProperty("user.dir"));
+            log.debug("完整命令: {}", String.join(" ", commandList));
+            log.debug("工作目录: {}", System.getProperty("user.dir"));
 
             ProcessBuilder pb = new ProcessBuilder(commandList);
             pb.directory(new File(System.getProperty("user.dir")));
-            pb.redirectErrorStream(true);
+            // 🔥 关键修复：不合并错误流，分开处理
+            pb.redirectErrorStream(false);
 
             process = pb.start();
-            startOutputMonitoring();
+
+            // 🔥 启动错误流监控（只监控错误，不影响主输出）
+            startErrorMonitoring();
 
             reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
             writer = new BufferedWriter(new OutputStreamWriter(process.getOutputStream()));
 
             // 等待进程启动
-            Thread.sleep(3000);
+            log.debug("⏳ 等待 MCP 服务器启动...");
+            Thread.sleep(2000);
 
             if (!process.isAlive()) {
                 int exitCode = process.exitValue();
-                log.error("MCP服务器进程退出，退出码: {}", exitCode);
+                log.error("❌ MCP服务器进程退出，退出码: {}", exitCode);
                 return false;
             }
+
+            log.debug("✅ MCP 进程已启动，开始协议初始化...");
 
             if (initializeProtocol()) {
                 listTools();
                 initialized = true;
-                log.info("✅ MCP客户端初始化成功: {} ({} 个工具)", serverName, availableTools.size());
+                log.debug("✅ MCP客户端初始化成功: {} ({} 个工具)", serverName, availableTools.size());
                 return true;
+            } else {
+                log.error("❌ MCP 协议初始化失败");
             }
 
         } catch (Exception e) {
-            log.error("连接MCP服务器失败: {}", serverName, e);
+            log.error("❌ 连接MCP服务器失败: {}", serverName, e);
         }
         return false;
     }
 
-    private void startOutputMonitoring() {
-        Thread monitorThread = new Thread(() -> {
-            try (BufferedReader outputReader = new BufferedReader(
-                    new InputStreamReader(process.getInputStream()))) {
+    /**
+     * 🔥 只监控错误流，避免和主输入流冲突
+     */
+    private void startErrorMonitoring() {
+        Thread errorThread = new Thread(() -> {
+            try (BufferedReader errorReader = new BufferedReader(
+                    new InputStreamReader(process.getErrorStream()))) {
                 String line;
-                while ((line = outputReader.readLine()) != null) {
-                    // 🔥 过滤掉 npm 相关的所有日志
+                while ((line = errorReader.readLine()) != null) {
+                    // 过滤 npm 无关的错误
                     if (line.contains("npm ERR!") || line.contains("npm WARN") ||
-                            line.contains("node_cache") || line.contains("_cacache")) {
-                        // 完全忽略 npm 错误、警告和缓存相关日志
+                            line.contains("node_cache") || line.contains("_cacache") ||
+                            line.contains("EPERM") || line.contains("operation not permitted")) {
                         continue;
                     }
 
-                    // 🔥 过滤其他系统错误日志
-                    if (line.contains("EPERM") || line.contains("operation not permitted") ||
-                            line.contains("The operation was rejected by your operating system")) {
-                        continue;
-                    }
-
-                    // 只记录真正的 MCP 服务器消息
-                    if (line.contains("Secure MCP") || line.contains("running on stdio")) {
-                        log.info("✅ MCP服务器已启动: {}", serverName);
-                    } else if (line.contains("error") || line.contains("Error") || line.contains("ERROR")) {
-                        log.error("MCP服务器错误: {}", line);
-                    } else if (line.contains("warning") || line.contains("Warning")) {
-                        log.warn("MCP服务器警告: {}", line);
-                    } else if (!line.trim().isEmpty()) {
-                        // 只记录非空的、非 npm 的输出
-                        log.info("MCP服务器: {}", line);
-                    }
-
-                    // 检查服务器就绪消息
-                    if (line.contains("running") || line.contains("ready") || line.contains("started")) {
-                        log.info("✅ MCP服务器已就绪: {}", serverName);
-                    }
+                    // 🔥 移除 MCP stderr 日志，保持输出简洁
+                    // 不再输出 MCP 服务器的标准错误流信息
                 }
             } catch (Exception e) {
-                if (process.isAlive()) {
-                    log.debug("输出监控结束: {}", e.getMessage());
-                }
+                // 正常结束
             }
         });
-        monitorThread.setDaemon(true);
-        monitorThread.setName("MCP-Monitor-" + serverName);
-        monitorThread.start();
+        errorThread.setDaemon(true);
+        errorThread.setName("MCP-Error-" + serverName);
+        errorThread.start();
+    }
+
+    private void startOutputMonitoring() {
+        // 🔥 已废弃：不再使用此方法，避免和 reader 冲突
     }
 
     private boolean initializeProtocol() throws IOException {
         try {
-            // 新的初始化请求格式
-            MCPRequest request = new MCPRequest(
-                    "initialize",
-                    Map.of(
-                            "jsonrpc", "2.0",
-                            "id", 1,
-                            "method", "initialize",
-                            "params", Map.of(
-                                    "protocolVersion", "2024-11-05",
-                                    "capabilities", Map.of(
-                                            "roots", Map.of("listChanged", true),
-                                            "tools", Map.of("listChanged", true)
-                                    ),
-                                    "clientInfo", Map.of(
-                                            "name", "ThoughtCoding",
-                                            "version", "1.0.0"
-                                    )
-                            )
-                    )
-            );
+            // 🔥 使用 MCPRequest 类来确保 JSON 序列化正确
+            Map<String, Object> params = new LinkedHashMap<>();
+            params.put("protocolVersion", "2024-11-05");
 
-            log.info("发送初始化请求...");
-            sendRequest(request);
+            Map<String, Object> capabilities = new LinkedHashMap<>();
+            Map<String, Object> roots = new LinkedHashMap<>();
+            roots.put("listChanged", true);
+            capabilities.put("roots", roots);
+            capabilities.put("sampling", new LinkedHashMap<>());
+            params.put("capabilities", capabilities);
+
+            Map<String, Object> clientInfo = new LinkedHashMap<>();
+            clientInfo.put("name", "ThoughtCoding");
+            clientInfo.put("version", "1.0.0");
+            params.put("clientInfo", clientInfo);
+
+            log.debug("发送初始化请求...");
+
+            // 使用 MCPRequest 确保正确序列化
+            MCPRequest request = new MCPRequest("initialize", params);
+            request.setId("1");  // 使用字符串 ID
+
+            String json = objectMapper.writeValueAsString(request);
+            log.debug("发送的JSON: {}", json);
+            writer.write(json);
+            writer.newLine();
+            writer.flush();
 
             // 读取并记录所有输出，用于调试
-            log.info("等待MCP服务器响应...");
+            log.debug("等待MCP服务器响应...");
             MCPResponse response = readResponse(15000);
 
             if (response != null) {
-                log.info("收到初始化响应: {}", response);
+                log.debug("收到初始化响应: {}", response);
                 if (response.getError() == null) {
-                    log.info("MCP协议初始化成功");
+                    log.debug("✅ MCP协议初始化成功");
                     return true;
                 } else {
-                    log.error("MCP协议初始化错误: {}", response.getError().getMessage());
+                    log.error("❌ MCP协议初始化错误: {}", response.getError().getMessage());
                 }
             }
 
             return false;
 
         } catch (Exception e) {
-            log.error("协议初始化异常: {}", e.getMessage());
+            log.error("❌ 协议初始化异常: {}", e.getMessage(), e);
             return false;
         }
     }
@@ -240,26 +237,13 @@ public class MCPClient {
 
     private MCPResponse readResponse(long timeoutMs) throws IOException {
         long startTime = System.currentTimeMillis();
+        int attemptCount = 0;
+
+        log.debug("⏳ 开始等待响应，超时时间: {}ms", timeoutMs);
+
         while (System.currentTimeMillis() - startTime < timeoutMs) {
             try {
-                // 直接读取，不检查 ready()
-                String line = reader.readLine();
-                if (line != null) {
-                    line = line.trim();
-                    if (!line.isEmpty()) {
-                        log.info("📨 收到MCP服务器原始输出: {}", line);
-
-                        // 尝试解析为 JSON
-                        try {
-                            MCPResponse response = objectMapper.readValue(line, MCPResponse.class);
-                            log.info("✅ 成功解析MCP响应: {}", response);
-                            return response;
-                        } catch (Exception e) {
-                            log.warn("⚠️ 响应不是有效JSON，但服务器有输出: {}", line);
-                            // 继续等待有效JSON响应
-                        }
-                    }
-                }
+                attemptCount++;
 
                 // 检查进程状态
                 if (process != null && !process.isAlive()) {
@@ -268,27 +252,58 @@ public class MCPClient {
                     throw new IOException("MCP进程异常退出");
                 }
 
+                // 非阻塞检查是否有数据可读
+                if (reader.ready()) {
+                    String line = reader.readLine();
+                    if (line != null) {
+                        line = line.trim();
+                        if (!line.isEmpty()) {
+                            log.debug("📨 收到数据 [尝试#{}]: {}", attemptCount, line);
+
+                            // 尝试解析为 JSON
+                            try {
+                                MCPResponse response = objectMapper.readValue(line, MCPResponse.class);
+                                log.debug("✅ 成功解析MCP响应 (耗时: {}ms)", System.currentTimeMillis() - startTime);
+                                return response;
+                            } catch (Exception e) {
+                                log.warn("⚠️ 响应不是有效JSON，继续等待: {}", line);
+                            }
+                        }
+                    }
+                } else {
+                    // 每500ms输出一次等待状态
+                    if (attemptCount % 5 == 0) {
+                        long elapsed = System.currentTimeMillis() - startTime;
+                        log.debug("⏳ 等待中... (已等待 {}ms / {}ms)", elapsed, timeoutMs);
+                    }
+                }
+
                 Thread.sleep(100);
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                log.error("❌ 读取响应被中断");
                 throw new IOException("读取响应被中断");
             }
         }
 
-        // 超时前尝试读取最后一行
+        // 超时
+        long totalTime = System.currentTimeMillis() - startTime;
+        log.error("❌ 读取响应超时！总等待时间: {}ms, 尝试次数: {}", totalTime, attemptCount);
+
+        // 尝试最后一次读取
         try {
             if (reader.ready()) {
                 String line = reader.readLine();
                 if (line != null && !line.trim().isEmpty()) {
-                    log.info("最后收到的数据: {}", line);
+                    log.error("❌ 超时前收到的最后数据: {}", line);
                 }
             }
         } catch (Exception e) {
             // 忽略
         }
 
-        throw new IOException("读取响应超时");
+        throw new IOException("读取响应超时 (等待了 " + totalTime + "ms)");
     }
 
     public void disconnect() {

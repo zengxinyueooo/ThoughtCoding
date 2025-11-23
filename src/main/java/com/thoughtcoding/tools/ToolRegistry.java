@@ -29,7 +29,12 @@ public class ToolRegistry implements ToolProvider {
         }
     }
 
-    // 为每种工具类型添加对应的 register 方法
+    // 🔥 通用的 register 方法，接受 BaseTool（用于 MCP 工具）
+    public void register(BaseTool tool) {
+        registerTool(tool);
+    }
+
+    // 为每种工具类型添加对应的 register 方法（保持向后兼容）
     public void register(FileManagerTool tool) {
         registerTool(tool);
     }

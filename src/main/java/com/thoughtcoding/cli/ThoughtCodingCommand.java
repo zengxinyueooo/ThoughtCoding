@@ -1,10 +1,13 @@
 package com.thoughtcoding.cli;
 
 import com.thoughtcoding.core.AgentLoop;
+import com.thoughtcoding.core.DirectCommandExecutor;
 import com.thoughtcoding.core.ThoughtCodingContext;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.service.SessionService;
 import com.thoughtcoding.ui.ThoughtCodingUI;
+import com.thoughtcoding.config.MCPConfig;
+import com.thoughtcoding.config.MCPServerConfig;
 import picocli.CommandLine;
 
 import java.util.*;
@@ -31,6 +34,9 @@ public class ThoughtCodingCommand implements Callable<Integer> {
     // 添加会话管理字段
     private AgentLoop currentAgentLoop;
     private String currentSessionId;
+
+    // 直接命令执行器
+    private DirectCommandExecutor directCommandExecutor;
 
     @CommandLine.Option(names = {"-i", "--interactive"}, description = "Run in interactive mode")
     private boolean interactive = true;
@@ -71,6 +77,7 @@ public class ThoughtCodingCommand implements Callable<Integer> {
 
     public ThoughtCodingCommand(ThoughtCodingContext context) {
         this.context = context;
+        this.directCommandExecutor = new DirectCommandExecutor(context);
     }
 
     @Override
@@ -244,6 +251,10 @@ public class ThoughtCodingCommand implements Callable<Integer> {
 
         while (true) {
             try {
+                // 🔥 在读取输入前输出一个换行，确保 thought> 提示符在新的一行
+                ui.getTerminal().writer().println();
+                ui.getTerminal().writer().flush();
+
                 String input = ui.readInput("thought> ");
 
                 if (input == null || input.trim().isEmpty()) {
@@ -271,9 +282,27 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                     continue;
                 }
 
+                // 🛑 停止生成命令
+                if (trimmedInput.equalsIgnoreCase("stop") || trimmedInput.equalsIgnoreCase("停止")) {
+                    stopCurrentGeneration();
+                    continue;
+                }
+
+                // 🔧 直接命令帮助
+                if (trimmedInput.equalsIgnoreCase("/commands") || trimmedInput.equalsIgnoreCase("/cmds")) {
+                    directCommandExecutor.listSupportedCommands();
+                    continue;
+                }
+
                 // 🔥 MCP 相关命令 - 直接在这里处理
                 if (trimmedInput.startsWith("/mcp")) {
                     handleMCPCommand(trimmedInput);
+                    continue;
+                }
+
+                // 🚀 新增：检查是否是直接命令执行
+                if (directCommandExecutor.shouldExecuteDirectly(trimmedInput)) {
+                    directCommandExecutor.executeDirectCommand(trimmedInput);
                     continue;
                 }
 
@@ -313,19 +342,27 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                 break;
             case "connect":
                 if (!argument.isEmpty()) {
-                    String[] connectArgs = argument.split("\\s+", 2);
-                    if (connectArgs.length == 2) {
-                        boolean success = context.connectMCPServer(connectArgs[0], connectArgs[1], Collections.emptyList());
+                    String[] connectArgs = argument.split("\\s+");
+                    if (connectArgs.length >= 1) {
+                        String serverName = connectArgs[0];
+                        String serverCommand = connectArgs.length >= 2 ? connectArgs[1] : "npx";
+
+                        // 🔥 根据服务器名自动构建参数
+                        List<String> args = buildMCPArgs(serverName);
+
+                        boolean success = context.connectMCPServer(serverName, serverCommand, args);
                         if (success) {
-                            ui.displaySuccess("MCP server connected: " + connectArgs[0]);
+                            ui.displaySuccess("MCP server connected: " + serverName);
                         } else {
                             ui.displayError("Failed to connect MCP server");
                         }
                     } else {
-                        ui.displayError("Usage: /mcp connect <server-name> <command>");
+                        ui.displayError("Usage: /mcp connect <server-name> [command]");
+                        ui.displayInfo("Example: /mcp connect filesystem");
+                        ui.displayInfo("         /mcp connect filesystem npx");
                     }
                 } else {
-                    ui.displayError("Usage: /mcp connect <server-name> <command>");
+                    ui.displayError("Usage: /mcp connect <server-name> [command]");
                 }
                 break;
             case "tools":
@@ -506,17 +543,49 @@ public class ThoughtCodingCommand implements Callable<Integer> {
         }
     }
 
+    /**
+     * 🛑 停止当前的 AI 生成
+     */
+    private void stopCurrentGeneration() {
+        ThoughtCodingUI ui = context.getUi();
+        try {
+            // 尝试停止 LangChainService 的生成
+            if (context.getAiService() instanceof com.thoughtcoding.service.LangChainService) {
+                com.thoughtcoding.service.LangChainService langChainService =
+                    (com.thoughtcoding.service.LangChainService) context.getAiService();
+
+                if (langChainService.isGenerating()) {
+                    langChainService.stopCurrentGeneration();
+                    ui.displayWarning("⏸️  生成已停止");
+                } else {
+                    ui.displayInfo("ℹ️  当前没有正在进行的生成");
+                }
+            } else {
+                ui.displayWarning("⚠️  当前 AI 服务不支持停止功能");
+            }
+        } catch (Exception e) {
+            ui.displayError("停止生成时出错: " + e.getMessage());
+        }
+    }
+
     private void showHelp() {
         context.getUi().displayInfo("""
                         🚀 可用命令：
                                                                \s
                                                                 💬 对话命令：
                                                                   <消息>         发送消息给AI助手
+                                                                  stop / 停止   停止当前的AI生成
                                                                   /new          开始新会话
                                                                   /save <名称>  保存当前会话
                                                                   /list         查看所有会话
                                                                   /clear        清空屏幕
                                                                   /help         显示帮助信息
+                                                               \s
+                                                                🔧 直接命令：
+                                                                  java version  直接执行Java命令
+                                                                  git status    直接执行Git命令
+                                                                  pwd, ls, etc. 系统命令直接执行
+                                                                  /commands     查看所有支持直接执行的命令
                                                                \s
                                                                 🔧 MCP 命令：
                                                                   /mcp list             列出MCP工具
@@ -536,6 +605,80 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                                                                 ❌ 退出命令：
                                                                   exit / quit         退出程序
                 """);
+    }
+
+    /**
+     * 🔥 根据服务器名从配置文件读取 MCP 参数
+     * 优先使用配置文件中的配置，如果没有则使用默认配置
+     */
+    private List<String> buildMCPArgs(String serverName) {
+        // 🔥 优先从配置文件读取
+        var mcpConfig = context.getMcpConfig();
+        var serverConfig = mcpConfig.getServerConfig(serverName);
+
+        if (serverConfig != null && serverConfig.getArgs() != null && !serverConfig.getArgs().isEmpty()) {
+            // 使用配置文件中的参数
+            context.getUi().displayInfo("✓ 使用配置文件中的 " + serverName + " 配置");
+            return new ArrayList<>(serverConfig.getArgs());
+        }
+
+        // 🔥 如果配置文件中没有，使用默认配置（向后兼容）
+        context.getUi().displayWarning("⚠ 配置文件中未找到 " + serverName + " 配置，使用默认配置");
+
+        List<String> args = new ArrayList<>();
+
+        switch (serverName.toLowerCase()) {
+            case "filesystem":
+            case "file-system":
+                args.add("-y");
+                args.add("@modelcontextprotocol/server-filesystem");
+                args.add(System.getProperty("user.home")); // 用户主目录
+                break;
+
+            case "sqlite":
+                args.add("-y");
+                args.add("@modelcontextprotocol/server-sqlite");
+                args.add("--database");
+                args.add("./data.db");
+                break;
+
+            case "postgres":
+            case "postgresql":
+                args.add("-y");
+                args.add("@modelcontextprotocol/server-postgres");
+                args.add("--connectionString");
+                args.add("postgresql://user:pass@localhost:5432/db");
+                break;
+
+            case "github":
+                args.add("-y");
+                args.add("@modelcontextprotocol/server-github");
+                args.add("--token");
+                args.add("your_github_token_here");  // 占位符
+                break;
+
+            case "mysql":
+                args.add("-y");
+                args.add("@modelcontextprotocol/server-mysql");
+                args.add("--connectionString");
+                args.add("mysql://user:pass@localhost:3306/db");
+                break;
+
+            case "weather":
+                args.add("-y");
+                args.add("@coding-squirrel/mcp-weather-server");
+                args.add("--apiKey");
+                args.add("your_weather_api_key");
+                break;
+
+            default:
+                // 如果是未知服务器，尝试作为包名直接安装
+                args.add("-y");
+                args.add(serverName);
+                break;
+        }
+
+        return args;
     }
 
     // ... 其他方法保持不变（handleInternalCommand, handleSinglePrompt, handleNewSession, handleSaveSession, handleListSessions, displaySessionList, handleClearScreen, saveCurrentSession）

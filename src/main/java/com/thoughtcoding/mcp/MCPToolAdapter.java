@@ -32,8 +32,8 @@ public class MCPToolAdapter extends BaseTool {
         try {
             log.debug("执行MCP工具: {} 输入: {}", getName(), input);
 
-            Map<String, Object> arguments = new HashMap<>();
-            arguments.put("input", input);
+            // 🔥 修复：正确解析JSON参数
+            Map<String, Object> arguments = parseInputToArguments(input);
 
             Object result = mcpClient.callTool(mcpTool.getName(), arguments);
 
@@ -52,6 +52,33 @@ public class MCPToolAdapter extends BaseTool {
             log.error("MCP工具执行失败: {} 错误: {} 耗时: {}ms", getName(), e.getMessage(), executionTime);
             return error("MCP工具执行失败: " + e.getMessage(), executionTime);
         }
+    }
+
+    /**
+     * 🔥 解析输入字符串为参数Map
+     * 如果输入是JSON格式，直接解析；否则作为单个参数
+     */
+    private Map<String, Object> parseInputToArguments(String input) {
+        Map<String, Object> arguments = new HashMap<>();
+
+        if (input == null || input.trim().isEmpty()) {
+            return arguments;
+        }
+
+        // 尝试解析JSON
+        if (input.trim().startsWith("{")) {
+            try {
+                com.fasterxml.jackson.databind.ObjectMapper mapper =
+                    new com.fasterxml.jackson.databind.ObjectMapper();
+                return mapper.readValue(input, Map.class);
+            } catch (Exception e) {
+                log.debug("输入不是有效JSON，使用默认解析: {}", e.getMessage());
+            }
+        }
+
+        // 如果不是JSON，将整个输入作为单个参数
+        arguments.put("input", input);
+        return arguments;
     }
 
     @Override

@@ -2,9 +2,11 @@ package com.thoughtcoding.core;
 
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.config.ConfigManager;
+import com.thoughtcoding.config.MCPConfig;
 import com.thoughtcoding.mcp.MCPService;
 import com.thoughtcoding.mcp.MCPToolManager;
 import com.thoughtcoding.service.AIService;
+import com.thoughtcoding.service.ContextManager;
 import com.thoughtcoding.service.LangChainService;
 import com.thoughtcoding.service.PerformanceMonitor;
 import com.thoughtcoding.service.SessionService;
@@ -15,6 +17,7 @@ import com.thoughtcoding.tools.file.FileManagerTool;
 import com.thoughtcoding.tools.search.GrepSearchTool;
 import com.thoughtcoding.ui.ThoughtCodingUI;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +33,7 @@ import java.util.Map;
  */
 public class ThoughtCodingContext {
     private final AppConfig appConfig;
+    private final MCPConfig mcpConfig;
     private final AIService aiService;
     private final SessionService sessionService;
     private final ToolRegistry toolRegistry;
@@ -40,8 +44,12 @@ public class ThoughtCodingContext {
     private final MCPService mcpService;
     private final MCPToolManager mcpToolManager;
 
+    // 🔥 新增上下文管理器
+    private final ContextManager contextManager;
+
     private ThoughtCodingContext(Builder builder) {
         this.appConfig = builder.appConfig;
+        this.mcpConfig = builder.mcpConfig;
         this.aiService = builder.aiService;
         this.sessionService = builder.sessionService;
         this.toolRegistry = builder.toolRegistry;
@@ -49,6 +57,7 @@ public class ThoughtCodingContext {
         this.performanceMonitor = builder.performanceMonitor;
         this.mcpService = builder.mcpService;
         this.mcpToolManager = builder.mcpToolManager;
+        this.contextManager = builder.contextManager;
     }
 
     public static ThoughtCodingContext initialize() {
@@ -58,13 +67,14 @@ public class ThoughtCodingContext {
         ConfigManager configManager = ConfigManager.getInstance();
         configManager.initialize("config.yaml");
         AppConfig appConfig = configManager.getAppConfig();
+        MCPConfig mcpConfig = configManager.getMCPConfig();
 
         // 能力层初始化,创建工具注册表
         ToolRegistry toolRegistry = new ToolRegistry(appConfig);
 
         // 🔥 创建 MCP 服务
         MCPService mcpService = new MCPService(toolRegistry);
-        MCPToolManager mcpToolManager = new MCPToolManager(mcpService);
+        MCPToolManager mcpToolManager = new MCPToolManager(mcpService, mcpConfig);
 
         // 注册内置工具 - 传递整个 AppConfig 对象
         if (appConfig.getTools().getFileManager().isEnabled()) {
@@ -84,12 +94,13 @@ public class ThoughtCodingContext {
         }
 
         // 🔥 初始化 MCP 服务（如果启用）
-        if (appConfig.getMcp() != null && appConfig.getMcp().isEnabled()) {
-            initializeMCPTools(appConfig, mcpService);
+        if (mcpConfig != null && mcpConfig.isEnabled()) {
+            initializeMCPTools(mcpConfig, mcpService, toolRegistry);
         }
 
         // 服务层初始化
-        AIService aiService = new LangChainService(appConfig, toolRegistry);
+        ContextManager contextManager = new ContextManager(appConfig);  // 🔥 创建上下文管理器
+        AIService aiService = new LangChainService(appConfig, toolRegistry, contextManager);  // 🔥 注入 contextManager
         SessionService sessionService = new SessionService();
         PerformanceMonitor performanceMonitor = new PerformanceMonitor();
 
@@ -99,6 +110,7 @@ public class ThoughtCodingContext {
         // 构建上下文（核心层初始化）
         return new Builder()
                 .appConfig(appConfig)
+                .mcpConfig(mcpConfig)
                 .aiService(aiService)
                 .sessionService(sessionService)
                 .toolRegistry(toolRegistry)
@@ -106,38 +118,49 @@ public class ThoughtCodingContext {
                 .performanceMonitor(performanceMonitor)
                 .mcpService(mcpService)
                 .mcpToolManager(mcpToolManager)
+                .contextManager(contextManager)  // 🔥 添加 contextManager
                 .build();
     }
 
     /**
      * 🔥 初始化 MCP 工具
      */
-    public static void initializeMCPTools(AppConfig appConfig, MCPService mcpService) {
-        System.out.println("初始化 MCP 工具...");
+    public static void initializeMCPTools(MCPConfig mcpConfig, MCPService mcpService, ToolRegistry toolRegistry) {
+        // 🔥 简化输出：只在最后显示汇总信息
 
-        var mcpConfig = appConfig.getMcp();
         if (mcpConfig != null && mcpConfig.isEnabled()) {
+            int totalTools = 0;
+            int successServers = 0;
+            List<String> connectedServers = new ArrayList<>();
+
             for (var serverConfig : mcpConfig.getServers()) {
                 if (serverConfig.isEnabled()) {
                     try {
-                        // 🔥 直接传递命令和参数列表，不再创建 Map
+                        // 静默连接，不输出中间过程
                         var tools = mcpService.connectToServer(
                                 serverConfig.getName(),
-                                serverConfig.getCommand(),  // 直接传递命令
-                                serverConfig.getArgs()      // 直接传递参数列表
+                                serverConfig.getCommand(),
+                                serverConfig.getArgs()
                         );
+
                         if (!tools.isEmpty()) {
-                            System.out.println("✓ MCP 服务器 " + serverConfig.getName() +
-                                    " 初始化成功 (" + tools.size() + " 个工具)");
-                        } else {
-                            System.out.println("⚠ MCP 服务器 " + serverConfig.getName() +
-                                    " 初始化失败或未发现工具");
+                            // 注册工具（静默）
+                            for (var tool : tools) {
+                                toolRegistry.register(tool);
+                            }
+                            totalTools += tools.size();
+                            successServers++;
+                            connectedServers.add(serverConfig.getName());
                         }
                     } catch (Exception e) {
-                        System.err.println("✗ MCP 服务器 " + serverConfig.getName() +
-                                " 初始化异常: " + e.getMessage());
+                        System.err.println("❌ 无法连接到 " + serverConfig.getName() + ": " + e.getMessage());
                     }
                 }
+            }
+
+            // 🔥 输出汇总信息，包含已连接的 MCP 工具名称
+            if (successServers > 0) {
+                System.out.println("✅ 已加载 " + totalTools + " 个工具，已连接 MCP: " + String.join(", ", connectedServers));
             }
         }
     }
@@ -233,9 +256,13 @@ public class ThoughtCodingContext {
 
     // Getter方法
     public AppConfig getAppConfig() { return appConfig; }
+    public MCPConfig getMcpConfig() { return mcpConfig; }
     public AIService getAiService() { return aiService; }
     public SessionService getSessionService() { return sessionService; }
     public ToolRegistry getToolRegistry() { return toolRegistry; }
+
+    // 🔥 新增 contextManager Getter
+    public ContextManager getContextManager() { return contextManager; }
     public ThoughtCodingUI getUi() { return ui; }
     public PerformanceMonitor getPerformanceMonitor() { return performanceMonitor; }
 
@@ -243,7 +270,7 @@ public class ThoughtCodingContext {
     public MCPService getMcpService() { return mcpService; }
     public MCPToolManager getMcpToolManager() { return mcpToolManager; }
     public boolean isMCPEnabled() {
-        return appConfig.getMcp() != null && appConfig.getMcp().isEnabled();
+        return mcpConfig != null && mcpConfig.isEnabled();
     }
     public int getMCPToolCount() {
         return mcpService != null ? mcpService.getMCPTools().size() : 0;
@@ -252,6 +279,7 @@ public class ThoughtCodingContext {
     // Builder模式
     public static class Builder {
         private AppConfig appConfig;
+        private MCPConfig mcpConfig;
         private AIService aiService;
         private SessionService sessionService;
         private ToolRegistry toolRegistry;
@@ -260,9 +288,16 @@ public class ThoughtCodingContext {
         // 🔥 新增 MCP 字段
         private MCPService mcpService;
         private MCPToolManager mcpToolManager;
+        // 🔥 新增上下文管理器字段
+        private ContextManager contextManager;
 
         public Builder appConfig(AppConfig appConfig) {
             this.appConfig = appConfig;
+            return this;
+        }
+
+        public Builder mcpConfig(MCPConfig mcpConfig) {
+            this.mcpConfig = mcpConfig;
             return this;
         }
 
@@ -299,6 +334,12 @@ public class ThoughtCodingContext {
 
         public Builder mcpToolManager(MCPToolManager mcpToolManager) {
             this.mcpToolManager = mcpToolManager;
+            return this;
+        }
+
+        // 🔥 新增 contextManager Builder 方法
+        public Builder contextManager(ContextManager contextManager) {
+            this.contextManager = contextManager;
             return this;
         }
 

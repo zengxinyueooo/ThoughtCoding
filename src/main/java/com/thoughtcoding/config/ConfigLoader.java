@@ -17,24 +17,26 @@ import java.nio.file.Paths;
 public class ConfigLoader {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(ConfigLoader.class);
 
-    private  MCPService mcpService;
+    private MCPService mcpService;
+    private MCPConfig mcpConfig;
+
     // 无参构造函数
     public ConfigLoader() {
     }
+
     //添加构造函数
-    public ConfigLoader(MCPService mcpService) {
+    public ConfigLoader(MCPService mcpService, MCPConfig mcpConfig) {
         this.mcpService = mcpService;
+        this.mcpConfig = mcpConfig;
     }
+
     private AppConfig appConfig;
-
-
 
     // 在配置加载后初始化 MCP
     public void initializeMCP() {
-        AppConfig.MCPConfig mcpConfig = appConfig.getMcp();
         if (mcpConfig != null && mcpConfig.isEnabled()) {
             log.info("初始化配置的MCP服务器...");
-            for (AppConfig.MCPServerConfig serverConfig : mcpConfig.getServers()) {
+            for (MCPServerConfig serverConfig : mcpConfig.getServers()) {
                 if (serverConfig.isEnabled()) {
                     mcpService.connectToServer(
                             serverConfig.getName(),

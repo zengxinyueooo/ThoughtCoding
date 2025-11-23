@@ -31,8 +31,16 @@ public class ThoughtCodingUI {
     public Terminal getTerminal() {
         return terminal;
     }
+
+    public LineReader getLineReader() {
+        return lineReader;
+    }
+
     public ThoughtCodingUI() {
         try {
+            // 🔥 禁用 JLine 的日志输出，避免警告信息
+            System.setProperty("org.jline.terminal.dumb", "true");
+
             // 初始化JLine终端
             this.terminal = TerminalBuilder.builder()
                     .name("ThoughtCoding") // 终端名称
@@ -79,7 +87,7 @@ public class ThoughtCodingUI {
             String[] titleLines = {
                     "Interactive Code Assistant CLI",
                     "- Java Edition -",
-                    "Version 1.0.0"
+                    "Version 2.0.0"
             };
 
             // 计算ASCII艺术的宽度（取第一行的长度，因为通常最宽）
@@ -217,13 +225,23 @@ public class ThoughtCodingUI {
 
     public void displayAIMessage(ChatMessage message) {
         if (message.isAssistantMessage()) {
-            terminal.writer().print(message.getContent());
+            String content = message.getContent();
+            // 流式输出每个token，使用亮青色显示（与系统信息颜色一致）
+            terminal.writer().print(AnsiColors.BRIGHT_CYAN + content + AnsiColors.RESET);
             terminal.writer().flush();
         }
     }
 
     public void displayToolCall(ToolCall toolCall) {
         toolDisplay.displayToolCall(toolCall);
+    }
+
+    /**
+     * 显示 Claude Code 风格的工具调用
+     * 例如：⏺ Write(HelloWorld.java)
+     */
+    public void displayClaudeStyleToolCall(String toolName, String target, String result) {
+        toolDisplay.displayClaudeStyleToolCall(toolName, target, result);
     }
 
     public void displayInfo(String info) {

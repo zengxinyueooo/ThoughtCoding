@@ -31,8 +31,8 @@ public class MCPService {
     // 🔥 新增3参数方法
     public List<BaseTool> connectToServer(String serverName, String command, List<String> args) {
         try {
-            log.info("启动MCP服务器: {} - {}", serverName, command);
-            log.info("参数: {}", args);
+            log.debug("启动MCP服务器: {} - {}", serverName, command);
+            log.debug("参数: {}", args);
 
             // 清理旧连接
             if (clients.containsKey(serverName)) {
@@ -41,19 +41,30 @@ public class MCPService {
                     existingClient.disconnect();
                 }
                 clients.remove(serverName);
+                connectedServers.remove(serverName); // 🔥 同时清理 connectedServers
             }
 
             MCPClient client = new MCPClient(serverName);
             boolean connected = client.connect(command, args);
 
             if (connected) {
+                // 🔥 保存到两个映射中
                 clients.put(serverName, client);
-                List<MCPTool> mcpTools = client.getAvailableTools();
-                List<BaseTool> baseTools = convertToBaseTools(mcpTools, serverName);
-                log.info("✅ 成功连接MCP服务器: {} ({} 个工具)", serverName, baseTools.size());
+                connectedServers.put(serverName, client);
+
+                List<MCPTool> mcpToolList = client.getAvailableTools();
+                List<BaseTool> baseTools = convertToBaseTools(mcpToolList, serverName);
+
+                // 🔥 保存工具到 mcpTools 映射
+                for (int i = 0; i < mcpToolList.size(); i++) {
+                    String toolKey = mcpToolList.get(i).getName(); // 使用工具名称作为key
+                    mcpTools.put(toolKey, baseTools.get(i));
+                }
+
+                log.debug("✅ 成功连接MCP服务器: {} ({} 个工具)", serverName, baseTools.size());
                 return baseTools;
             } else {
-                log.warn("⚠️ 连接MCP服务器失败: {}", serverName);
+                log.debug("⚠️ 连接MCP服务器失败: {}", serverName);
                 return Collections.emptyList();
             }
         } catch (Exception e) {
@@ -69,7 +80,7 @@ public class MCPService {
                 @Override
                 public ToolResult execute(String input) {
                     try {
-                        // 将输入字符串解析为参数Map
+                        // 🔥 修复：正确解析JSON参数
                         Map<String, Object> parameters = parseInputToParameters(input);
                         Object result = callTool(serverName, mcpTool.getName(), parameters);
                         return success(result != null ? result.toString() : "执行成功");
@@ -87,29 +98,42 @@ public class MCPService {
                 public boolean isEnabled() {
                     return true;
                 }
+
+                // 🔥 关键修复：暴露inputSchema给系统提示词（重写BaseTool方法）
+                public Object getInputSchema() {
+                    return mcpTool.getInputSchema();
+                }
             };
             baseTools.add(baseTool);
         }
         return baseTools;
     }
 
-    // 简单的输入解析方法
+    /**
+     * 🔥 修复：优先解析JSON格式的参数
+     * 如果输入是JSON对象，直接解析为Map；否则作为单个参数
+     */
     private Map<String, Object> parseInputToParameters(String input) {
         Map<String, Object> parameters = new HashMap<>();
-        if (input != null && !input.trim().isEmpty()) {
-            // 简单处理：将整个输入作为单个参数
-            parameters.put("input", input);
 
-            // 或者尝试解析JSON
-            if (input.trim().startsWith("{")) {
-                try {
-                    ObjectMapper mapper = new ObjectMapper();
-                    return mapper.readValue(input, Map.class);
-                } catch (Exception e) {
-                    log.debug("输入不是有效JSON，使用默认解析");
-                }
+        if (input == null || input.trim().isEmpty()) {
+            return parameters;
+        }
+
+        // 🔥 优先尝试解析JSON
+        if (input.trim().startsWith("{")) {
+            try {
+                ObjectMapper mapper = new ObjectMapper();
+                Map<String, Object> parsed = mapper.readValue(input, Map.class);
+                log.debug("✅ 成功解析JSON参数: {}", parsed);
+                return parsed;
+            } catch (Exception e) {
+                log.debug("⚠️ JSON解析失败，使用默认解析: {}", e.getMessage());
             }
         }
+
+        // 如果不是JSON或解析失败，将整个输入作为单个参数
+        parameters.put("input", input);
         return parameters;
     }
 
@@ -147,13 +171,13 @@ public class MCPService {
                 if (shouldRemove) {
                     // 根据你的 ToolRegistry 实现，可能需要不同的取消注册方法
                     // 如果没有 unregister 方法，可能需要其他方式处理
-                    log.info("移除MCP工具: {}", entry.getKey());
+                    log.debug("移除MCP工具: {}", entry.getKey());
                 }
                 return shouldRemove;
             });
 
             client.disconnect();
-            log.info("已断开MCP服务器: {}", serverName);
+            log.debug("已断开MCP服务器: {}", serverName);
         }
     }
 
