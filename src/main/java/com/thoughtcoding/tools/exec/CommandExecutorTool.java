@@ -53,7 +53,23 @@ public class CommandExecutorTool extends BaseTool {
                 return error("No command provided", System.currentTimeMillis() - startTime);
             }
 
-            String[] commandParts = input.split("\\s+");
+            // 🔥 处理 JSON 格式的输入：{"command":"rm sessions/*"}
+            String command = input;
+            if (input.trim().startsWith("{")) {
+                try {
+                    // 使用简单的正则提取 command 字段的值
+                    java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("\"command\"\\s*:\\s*\"([^\"]+)\"");
+                    java.util.regex.Matcher matcher = pattern.matcher(input);
+                    if (matcher.find()) {
+                        command = matcher.group(1);
+                    }
+                } catch (Exception e) {
+                    // 如果解析失败，使用原始输入
+                    command = input;
+                }
+            }
+
+            String[] commandParts = command.split("\\s+");
             String baseCommand = commandParts[0].toLowerCase();
 
             // 安全检查
@@ -62,8 +78,20 @@ public class CommandExecutorTool extends BaseTool {
                         System.currentTimeMillis() - startTime);
             }
 
-            // 执行命令
-            ProcessBuilder processBuilder = new ProcessBuilder(commandParts);
+            // 🔥 执行命令 - 通过 shell 执行以支持通配符等特性
+            ProcessBuilder processBuilder;
+            String os = System.getProperty("os.name").toLowerCase();
+            if (os.contains("win")) {
+                // Windows 系统
+                processBuilder = new ProcessBuilder("cmd.exe", "/c", command);
+            } else {
+                // Unix/Linux/Mac 系统
+                processBuilder = new ProcessBuilder("sh", "-c", command);
+            }
+
+            // 🔥 设置工作目录为当前目录（作为默认路径）
+            // 但命令中可以使用绝对路径访问其他目录
+            processBuilder.directory(new java.io.File(System.getProperty("user.dir")));
             processBuilder.redirectErrorStream(true);
 
             Process process = processBuilder.start();

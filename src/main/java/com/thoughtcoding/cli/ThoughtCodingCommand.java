@@ -251,6 +251,10 @@ public class ThoughtCodingCommand implements Callable<Integer> {
 
         while (true) {
             try {
+                // 🔥 在读取输入前输出一个换行，确保 thought> 提示符在新的一行
+                ui.getTerminal().writer().println();
+                ui.getTerminal().writer().flush();
+
                 String input = ui.readInput("thought> ");
 
                 if (input == null || input.trim().isEmpty()) {

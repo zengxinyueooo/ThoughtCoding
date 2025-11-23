@@ -87,7 +87,8 @@ public class FileManagerTool extends BaseTool {
 
     private ToolResult writeFileWithContent(String filePath, String content, long startTime) {
         try {
-            Path path = Paths.get(filePath).toAbsolutePath();
+            String expandedPath = expandUserHome(filePath);
+            Path path = Paths.get(expandedPath).toAbsolutePath();
             Files.createDirectories(path.getParent());
             Files.writeString(path, content);
             return success("File written: " + filePath + " (" + content.length() + " bytes)",
@@ -99,7 +100,8 @@ public class FileManagerTool extends BaseTool {
 
     private ToolResult readFile(String filePath, long startTime) {
         try {
-            Path path = Paths.get(filePath).toAbsolutePath();
+            String expandedPath = expandUserHome(filePath);
+            Path path = Paths.get(expandedPath).toAbsolutePath();
 
             if (!Files.exists(path)) {
                 return error("File not found: " + filePath, System.currentTimeMillis() - startTime);
@@ -133,7 +135,8 @@ public class FileManagerTool extends BaseTool {
             String filePath = parts[0];
             String content = parts[1];
 
-            Path path = Paths.get(filePath).toAbsolutePath();
+            String expandedPath = expandUserHome(filePath);
+            Path path = Paths.get(expandedPath).toAbsolutePath();
 
             // 确保父目录存在
             Files.createDirectories(path.getParent());
@@ -149,7 +152,8 @@ public class FileManagerTool extends BaseTool {
 
     private ToolResult listFiles(String directoryPath, long startTime) {
         try {
-            Path path = Paths.get(directoryPath.isEmpty() ? "." : directoryPath).toAbsolutePath();
+            String expandedPath = expandUserHome(directoryPath.isEmpty() ? "." : directoryPath);
+            Path path = Paths.get(expandedPath).toAbsolutePath();
 
             if (!Files.exists(path)) {
                 return error("Directory not found: " + path, System.currentTimeMillis() - startTime);
@@ -182,7 +186,8 @@ public class FileManagerTool extends BaseTool {
 
     private ToolResult createDirectory(String dirPath, long startTime) {
         try {
-            Path path = Paths.get(dirPath).toAbsolutePath();
+            String expandedPath = expandUserHome(dirPath);
+            Path path = Paths.get(expandedPath).toAbsolutePath();
             Files.createDirectories(path);
             return success("Directory created: " + path, System.currentTimeMillis() - startTime);
         } catch (IOException e) {
@@ -192,7 +197,8 @@ public class FileManagerTool extends BaseTool {
 
     private ToolResult deleteFileOrDirectory(String filePath, long startTime) {
         try {
-            Path path = Paths.get(filePath).toAbsolutePath();
+            String expandedPath = expandUserHome(filePath);
+            Path path = Paths.get(expandedPath).toAbsolutePath();
 
             if (!Files.exists(path)) {
                 return error("File or directory not found: " + filePath, System.currentTimeMillis() - startTime);
@@ -231,7 +237,8 @@ public class FileManagerTool extends BaseTool {
 
     private ToolResult fileInfo(String filePath, long startTime) {
         try {
-            Path path = Paths.get(filePath).toAbsolutePath();
+            String expandedPath = expandUserHome(filePath);
+            Path path = Paths.get(expandedPath).toAbsolutePath();
 
             if (!Files.exists(path)) {
                 return error("File not found: " + filePath, System.currentTimeMillis() - startTime);
@@ -261,5 +268,27 @@ public class FileManagerTool extends BaseTool {
     @Override
     public boolean isEnabled() {
         return appConfig.getTools().getFileManager().isEnabled();
+    }
+
+    /**
+     * 🔥 展开路径中的 ~ 符号为用户主目录
+     * 例如：~/Desktop -> /Users/username/Desktop
+     */
+    private String expandUserHome(String path) {
+        if (path == null || path.isEmpty()) {
+            return path;
+        }
+
+        // 如果路径以 ~ 开头，替换为用户主目录
+        if (path.startsWith("~/") || path.equals("~")) {
+            String userHome = System.getProperty("user.home");
+            if (path.equals("~")) {
+                return userHome;
+            } else {
+                return userHome + path.substring(1);
+            }
+        }
+
+        return path;
     }
 }

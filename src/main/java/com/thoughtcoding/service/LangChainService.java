@@ -327,6 +327,79 @@ public class LangChainService implements AIService {
 
         String lowerResponse = aiResponse.toLowerCase();
 
+        // 🔥 优先检测简化格式（⏺ Read/Write/Bash/List）- 这些格式必须严格执行
+        // ⏺ Read(文件名)
+        if (aiResponse.contains("⏺ Read(") || lowerResponse.matches(".*⏺\\s*read\\s*\\(.*")) {
+            String filePath = extractFromSimplifiedFormat(aiResponse, "read");
+            if (filePath != null) {
+                triggerFileManagerRead(filePath);
+                hasTriggeredToolCall = true;
+                return true;
+            }
+        }
+
+        // ⏺ List(目录)
+        if (aiResponse.contains("⏺ List(") || lowerResponse.matches(".*⏺\\s*list\\s*\\(.*")) {
+            String dirPath = extractFromSimplifiedFormat(aiResponse, "list");
+            if (dirPath != null) {
+                triggerFileManagerList(dirPath);
+                hasTriggeredToolCall = true;
+                return true;
+            }
+        }
+
+        // ⏺ Bash(命令)
+        if (aiResponse.contains("⏺ Bash(") || lowerResponse.matches(".*⏺\\s*bash\\s*\\(.*")) {
+            String command = extractFromSimplifiedFormat(aiResponse, "bash");
+            if (command != null) {
+                triggerCommandExecutor(command);
+                hasTriggeredToolCall = true;
+                return true;
+            }
+        }
+
+        // ⏺ Write(文件名) - 注意：这个只是标记，实际内容在代码块中
+        if (aiResponse.contains("⏺ Write(") || lowerResponse.matches(".*⏺\\s*write\\s*\\(.*")) {
+            String fileName = extractFromSimplifiedFormat(aiResponse, "write");
+            String content = extractFileContent(aiResponse);
+            if (fileName != null && content != null) {
+                triggerWriteFile(fileName, content);
+                hasTriggeredToolCall = true;
+                return true;
+            }
+        }
+
+        // 🔥 检测完整格式
+        // 🔥 新增：检测 file_manager read 命令
+        if (lowerResponse.contains("file_manager read")) {
+            String filePath = extractQuotedPath(aiResponse, "file_manager read");
+            if (filePath != null) {
+                triggerFileManagerRead(filePath);
+                hasTriggeredToolCall = true;
+                return true;
+            }
+        }
+
+        // 🔥 新增：检测 file_manager list 命令
+        if (lowerResponse.contains("file_manager list")) {
+            String dirPath = extractQuotedPath(aiResponse, "file_manager list");
+            if (dirPath != null) {
+                triggerFileManagerList(dirPath);
+                hasTriggeredToolCall = true;
+                return true;
+            }
+        }
+
+        // 🔥 新增：检测 command_executor 命令
+        if (lowerResponse.contains("command_executor")) {
+            String command = extractQuotedPath(aiResponse, "command_executor");
+            if (command != null) {
+                triggerCommandExecutor(command);
+                hasTriggeredToolCall = true;
+                return true;
+            }
+        }
+
         // 🔥 提前检测：看到 write_f 就知道可能是 write_file，提前标记（但不触发）
         if (lowerResponse.contains("write_f") && !hasTriggeredToolCall) {
             // 继续积累，等待完整命令
@@ -486,6 +559,75 @@ public class LangChainService implements AIService {
         }
 
         return null;
+    }
+
+    /**
+     * 🔥 从简化格式中提取参数
+     * 例如：⏺ Read(HelloWorld.java) -> "HelloWorld.java"
+     *       ⏺ Bash(ls -la) -> "ls -la"
+     */
+    private String extractFromSimplifiedFormat(String response, String command) {
+        // 匹配格式：⏺ Command(参数)
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+            "⏺\\s*" + command + "\\s*\\(([^)]+)\\)",
+            java.util.regex.Pattern.CASE_INSENSITIVE
+        );
+        java.util.regex.Matcher matcher = pattern.matcher(response);
+        if (matcher.find()) {
+            return matcher.group(1).trim();
+        }
+        return null;
+    }
+
+    /**
+     * 🔥 从完整格式中提取带引号的路径
+     * 例如：file_manager read "test.java" -> "test.java"
+     */
+    private String extractQuotedPath(String response, String command) {
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+            command + "\\s+\"([^\"]+)\"",
+            java.util.regex.Pattern.CASE_INSENSITIVE
+        );
+        java.util.regex.Matcher matcher = pattern.matcher(response);
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        return null;
+    }
+
+    /**
+     * 🔥 触发文件读取工具调用
+     */
+    private void triggerFileManagerRead(String filePath) {
+        java.util.Map<String, Object> params = new java.util.HashMap<>();
+        params.put("command", "read");
+        params.put("path", filePath);
+
+        ToolCall toolCall = new ToolCall("file_manager", params, null, false, 0);
+        toolCallHandler.accept(toolCall);
+    }
+
+    /**
+     * 🔥 触发目录列出工具调用
+     */
+    private void triggerFileManagerList(String dirPath) {
+        java.util.Map<String, Object> params = new java.util.HashMap<>();
+        params.put("command", "list");
+        params.put("path", dirPath);
+
+        ToolCall toolCall = new ToolCall("file_manager", params, null, false, 0);
+        toolCallHandler.accept(toolCall);
+    }
+
+    /**
+     * 🔥 触发命令执行工具调用
+     */
+    private void triggerCommandExecutor(String command) {
+        java.util.Map<String, Object> params = new java.util.HashMap<>();
+        params.put("command", command);
+
+        ToolCall toolCall = new ToolCall("command_executor", params, null, false, 0);
+        toolCallHandler.accept(toolCall);
     }
 
     /**

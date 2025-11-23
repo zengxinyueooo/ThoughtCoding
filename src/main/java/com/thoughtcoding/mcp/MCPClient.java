@@ -110,10 +110,8 @@ public class MCPClient {
                         continue;
                     }
 
-                    // 记录真正的错误
-                    if (!line.trim().isEmpty()) {
-                        log.warn("MCP stderr: {}", line);
-                    }
+                    // 🔥 移除 MCP stderr 日志，保持输出简洁
+                    // 不再输出 MCP 服务器的标准错误流信息
                 }
             } catch (Exception e) {
                 // 正常结束

@@ -17,6 +17,7 @@ import com.thoughtcoding.tools.file.FileManagerTool;
 import com.thoughtcoding.tools.search.GrepSearchTool;
 import com.thoughtcoding.ui.ThoughtCodingUI;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -130,6 +131,7 @@ public class ThoughtCodingContext {
         if (mcpConfig != null && mcpConfig.isEnabled()) {
             int totalTools = 0;
             int successServers = 0;
+            List<String> connectedServers = new ArrayList<>();
 
             for (var serverConfig : mcpConfig.getServers()) {
                 if (serverConfig.isEnabled()) {
@@ -148,6 +150,7 @@ public class ThoughtCodingContext {
                             }
                             totalTools += tools.size();
                             successServers++;
+                            connectedServers.add(serverConfig.getName());
                         }
                     } catch (Exception e) {
                         System.err.println("❌ 无法连接到 " + serverConfig.getName() + ": " + e.getMessage());
@@ -155,9 +158,9 @@ public class ThoughtCodingContext {
                 }
             }
 
-            // 只输出一行汇总信息
+            // 🔥 输出汇总信息，包含已连接的 MCP 工具名称
             if (successServers > 0) {
-                System.out.println("✅ 已加载 " + totalTools + " 个工具");
+                System.out.println("✅ 已加载 " + totalTools + " 个工具，已连接 MCP: " + String.join(", ", connectedServers));
             }
         }
     }

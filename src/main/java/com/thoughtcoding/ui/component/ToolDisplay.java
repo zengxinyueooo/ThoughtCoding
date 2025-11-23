@@ -37,4 +37,41 @@ public class ToolDisplay {
         terminal.writer().println(message);
         terminal.writer().flush();
     }
+
+    /**
+     * 显示 Claude Code 风格的工具调用
+     * 格式：⏺ Write(HelloWorld.java)
+     */
+    public void displayClaudeStyleToolCall(String toolName, String target, String result) {
+        // 转换工具名称为友好的显示名
+        String displayName = getFriendlyToolName(toolName);
+
+        // 显示工具调用
+        String callMessage = String.format("%s⏺ %s(%s)%s",
+                AnsiColors.BRIGHT_CYAN, displayName, target, AnsiColors.RESET);
+        terminal.writer().println(callMessage);
+
+        // 显示结果（缩进显示）
+        if (result != null && !result.isEmpty()) {
+            String resultMessage = String.format("%s  ⎿ %s%s",
+                    AnsiColors.BRIGHT_BLACK, result, AnsiColors.RESET);
+            terminal.writer().println(resultMessage);
+        }
+
+        terminal.writer().flush();
+    }
+
+    /**
+     * 将工具名称转换为友好的显示名
+     */
+    private String getFriendlyToolName(String toolName) {
+        return switch (toolName) {
+            case "write_file" -> "Write";
+            case "read_file" -> "Read";
+            case "execute_command" -> "Bash";
+            case "list_directory" -> "List";
+            case "edit_file" -> "Edit";
+            default -> toolName;
+        };
+    }
 }

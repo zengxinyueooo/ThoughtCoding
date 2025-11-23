@@ -238,6 +238,39 @@ public class DirectCommandExecutor {
     }
 
     /**
+     * 🔥 从自然语言中提取路径参数
+     * 例如："查看sessions下的文件" -> "sessions"
+     *       "列出src目录的内容" -> "src"
+     */
+    private String extractPathFromNaturalLanguage(String input) {
+        // 匹配 "XXX下" 或 "XXX目录" 或 "XXX文件夹" 的模式
+        java.util.regex.Pattern pattern1 = java.util.regex.Pattern.compile(
+            "(?:查看|列出|显示|列表|ls)\\s*([\\w/.\\-]+)(?:下|目录|文件夹|里|中|内)?(?:的|之)?(?:文件|内容|列表)?",
+            java.util.regex.Pattern.CASE_INSENSITIVE
+        );
+        java.util.regex.Matcher matcher1 = pattern1.matcher(input);
+        if (matcher1.find()) {
+            return matcher1.group(1);
+        }
+
+        // 匹配另一种模式: "查看XXX"
+        java.util.regex.Pattern pattern2 = java.util.regex.Pattern.compile(
+            "(?:查看|列出|显示).*?([\\w/.\\-]+).*?(?:文件|目录|内容)",
+            java.util.regex.Pattern.CASE_INSENSITIVE
+        );
+        java.util.regex.Matcher matcher2 = pattern2.matcher(input);
+        if (matcher2.find()) {
+            String path = matcher2.group(1);
+            // 过滤掉一些常见的干扰词
+            if (!path.matches("(?i)(的|所有|全部|当前)")) {
+                return path;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * 判断输入是否应该使用 MCP 工具处理
      */
     private boolean shouldUseMCP(String input) {
@@ -291,7 +324,15 @@ public class DirectCommandExecutor {
         for (Map.Entry<Pattern, String> entry : NATURAL_LANGUAGE_COMMANDS.entrySet()) {
             if (entry.getKey().matcher(trimmedInput).matches()) {
                 command = entry.getValue();
-                // 已移除提示信息，直接执行
+
+                // 🔥 智能提取路径参数（针对文件/目录查看命令）
+                if (command != null && command.equals("ls -la")) {
+                    String extractedPath = extractPathFromNaturalLanguage(trimmedInput);
+                    if (extractedPath != null && !extractedPath.isEmpty()) {
+                        command = "ls -la " + extractedPath;
+                    }
+                }
+
                 break;
             }
         }
