@@ -1,6 +1,6 @@
 # ThoughtCoding CLI
 
-![1759907149614](1759907149614.jpg)
+![ThoughtCoding CLI](picture.png)
 
 一个基于 LangChain 的交互式代码助手 CLI 工具，支持流式输出、工具调用和智能对话。
 
@@ -18,10 +18,15 @@
 - **工具扩展** - 通过 MCP 支持文件管理、数据库操作、搜索、GitHub 等 50+ 种工具
 - **动态工具发现** - 自动发现和注册 MCP 服务器的可用工具
 - **即插即用** - 无需重启即可动态连接新的 MCP 服务器
+- **预定义工具** - 内置常用 MCP 工具快捷方式，一键连接
 - **配置管理** - 灵活的 YAML 配置文件系统，支持 MCP 服务器动态配置
 - **类型安全** - 完整的 Java 类型定义和封装
 - **终端 UI** - 基于 JLine + ANSI 颜色的现代化终端界面
 - **会话管理** - 会话保存、加载和会话继续功能
+- **上下文管理** - 智能上下文窗口管理，Token 优化，支持滑动窗口策略
+- **项目感知** - 自动检测项目类型（Maven/Gradle/NPM），提供项目上下文
+- **选项管理** - AI 提供多选项，用户可通过数字选择
+- **工具确认** - 工具执行前用户确认机制，提高安全性
 - **性能监控** - 内置性能监控和 Token 使用统计
 - **智能搜索** - 具备代码搜索和文件内容搜索能力
 - **跨平台支持** - 支持 Windows、Linux、macOS 系统
@@ -34,16 +39,22 @@ ThoughtCoding/
 │   ├── 📁 cli/                          # 🎯 命令行接口
 │   │   ├── ThoughtCodingCommand.java    # 主命令处理器
 │   │   ├── SessionCommand.java          # 会话管理命令
-│   │   └── ConfigCommand.java           # 配置管理命令
+│   │   ├── ConfigCommand.java           # 配置管理命令
+│   │   └── MCPCommand.java              # MCP 管理命令
 │   ├── 📁 core/                         # 🔧 核心功能
 │   │   ├── ThoughtCodingContext.java    # 应用上下文
 │   │   ├── AgentLoop.java               # Agent 循环引擎
 │   │   ├── MessageHandler.java          # 消息处理器
-│   │   └── StreamingOutput.java         # 流式输出处理
+│   │   ├── StreamingOutput.java         # 流式输出处理
+│   │   ├── ProjectContext.java          # 项目上下文检测
+│   │   ├── OptionManager.java           # 选项管理（AI提供多选项）
+│   │   ├── ToolExecutionConfirmation.java # 工具执行确认
+│   │   └── DirectCommandExecutor.java   # 直接命令执行器
 │   ├── 📁 service/                      # 🛠️ 服务层
 │   │   ├── LangChainService.java        # AI 服务核心
 │   │   ├── SessionService.java          # 会话数据管理
 │   │   ├── AIService.java               # AI 服务接口
+│   │   ├── ContextManager.java          # 上下文管理器（历史窗口、Token控制）
 │   │   └── PerformanceMonitor.java      # 性能监控
 │   ├── 📁 tools/                        # 🔨 工具集合
 │   │   ├── BaseTool.java                # 工具基类
@@ -60,7 +71,7 @@ ThoughtCoding/
 │   │   ├── MCPClient.java               # MCP 客户端
 │   │   ├── MCPToolAdapter.java          # MCP 工具适配器
 │   │   ├── MCPToolManager.java          # MCP 工具管理器
-│   │   └── 📁 model/                    # MCP 数据模型
+│   │   └── 📁 model/                    # MCP 协议数据模型
 │   │       ├── MCPRequest.java          # MCP 请求
 │   │       ├── MCPResponse.java         # MCP 响应
 │   │       ├── MCPError.java            # MCP 错误
@@ -78,12 +89,21 @@ ThoughtCoding/
 │   ├── 📁 config/                       # ⚙️ 配置管理
 │   │   ├── AppConfig.java               # 应用配置
 │   │   ├── ConfigLoader.java            # 配置加载器
-│   │   └── ConfigManager.java           # 配置管理器
-│   └── 📁 model/                        # 📊 数据模型
-│       ├── ChatMessage.java             # 聊天消息
-│       ├── SessionData.java             # 会话数据
-│       ├── ToolCall.java                # 工具调用
-│       └── ToolResult.java              # 工具结果
+│   │   ├── ConfigManager.java           # 配置管理器
+│   │   ├── MCPConfig.java               # MCP 配置模型
+│   │   └── MCPServerConfig.java         # MCP 服务器配置
+│   ├── 📁 model/                        # 📊 通用数据模型
+│   │   ├── ChatMessage.java             # 聊天消息
+│   │   ├── SessionData.java             # 会话数据
+│   │   ├── ToolCall.java                # 工具调用
+│   │   ├── ToolExecution.java           # 工具执行记录
+│   │   ├── ToolResult.java              # 工具结果
+│   │   └── ModelConfig.java             # 模型配置
+│   └── 📁 util/                         # 🛠️ 工具类
+│       ├── JsonUtils.java               # JSON 工具
+│       ├── FileUtils.java               # 文件工具
+│       ├── StreamUtils.java             # 流工具
+│       └── ConsoleUtils.java            # 控制台工具
 ├── 📁 bin/                              # 🚀 启动脚本
 │   ├── thought                         # Linux/macOS 脚本
 │   └── thought.bat                     # Windows 脚本
@@ -112,10 +132,17 @@ ThoughtCoding/
 `SessionCommand.java`
 
 - **功能**：会话管理命令类
+- **特性**：支持会话列表、加载、删除等操作
 
 `ConfigCommand.java`
 
 - **功能**：配置管理命令类
+- **特性**：支持配置查看、设置、重置等操作
+
+`MCPCommand.java`
+
+- **功能**：MCP 管理命令类
+- **特性**：支持 MCP 服务器连接、断开、列表查看、预定义工具快捷连接
 
 `ThoughtCodingCommand.java`
 
@@ -143,11 +170,24 @@ ThoughtCoding/
 
 `ConfigManager.java`
 
-- **功能**：配置管理器
+- **功能**：配置管理器（单例模式）
+- **特性**：全局唯一配置实例，支持动态加载和热更新
 
-### `src/main/java/com/thoughtcoding/model/` - 数据模型
+`MCPConfig.java`
 
-**功能**: 集中管理所有数据模型和类型定义
+- **功能**：MCP 配置模型
+- **特性**：定义 MCP 功能模块的配置结构
+
+`MCPServerConfig.java`
+
+- **功能**：MCP 服务器配置
+- **特性**：定义单个 MCP 服务器的配置项（名称、命令、参数等）
+
+### `src/main/java/com/thoughtcoding/model/` - 通用数据模型
+
+**功能**: 集中管理通用的数据模型和类型定义（独立包，与 `mcp/model/` 不同）
+
+**注意**: 此 `model/` 包是独立的通用数据模型包，与 `mcp/model/`（MCP 协议专用数据模型）是并列关系。
 
 **主要类**:
 
@@ -155,6 +195,7 @@ ThoughtCoding/
 - `ModelConfig.java` - 模型配置
 - `SessionData.java` - 会话数据
 - `ToolCall.java` - 工具调用
+- `ToolExecution.java` - 工具执行记录
 - `ToolResult.java` - 工具结果
 
 ### `src/main/java/com/thoughtcoding/core/` - 核心功能
@@ -163,20 +204,43 @@ ThoughtCoding/
 
 `ThoughtCodingContext.java`
 
-- **功能**：应用上下文
+- **功能**：应用上下文容器（依赖注入）
+- **特性**：统一管理所有服务组件，提供全局访问入口
 
 `AgentLoop.java`
 
 - **功能**：Agent 循环实现类
-- **特性**：基于 LangChain4j 实现智能对话
+- **特性**：基于 LangChain4j 实现智能对话，支持工具调用和选项管理
 
 `MessageHandler.java`
 
 - **功能**：消息处理器
+- **特性**：处理流式输出，实时显示 AI 响应
 
 `StreamingOutput.java`
 
 - **功能**：流式输出处理类
+- **特性**：Token-by-Token 实时输出，优化用户体验
+
+`ProjectContext.java`
+
+- **功能**：项目上下文检测
+- **特性**：自动识别项目类型（Maven/Gradle/NPM等），提供项目相关信息
+
+`OptionManager.java`
+
+- **功能**：选项管理器
+- **特性**：从 AI 响应中提取多选项，支持用户选择（1/2/3）
+
+`ToolExecutionConfirmation.java`
+
+- **功能**：工具执行确认
+- **特性**：在执行工具前进行用户确认，提高安全性
+
+`DirectCommandExecutor.java`
+
+- **功能**：直接命令执行器
+- **特性**：支持直接执行系统命令，无需通过工具调用
 
 ### `src/main/java/com/thoughtcoding/service/` - 服务层
 
@@ -185,9 +249,15 @@ ThoughtCoding/
 **主要服务**:
 
 - `LangChainService.java` - AI 服务核心实现
+  - **特性**：集成 LangChain4j，支持流式响应和工具调用
 - `SessionService.java` - 会话数据管理
+  - **特性**：会话持久化、加载、自动保存
 - `AIService.java` - AI 服务接口
+  - **特性**：定义统一的 AI 服务接口，支持多模型切换
+- `ContextManager.java` - 上下文管理器
+  - **特性**：管理对话历史窗口，控制 Token 使用，实现滑动窗口策略
 - `PerformanceMonitor.java` - 性能监控
+  - **特性**：Token 使用统计、执行时间监控、性能指标收集
 
 ### `src/main/java/com/thoughtcoding/tools/` - 工具集合
 
@@ -208,6 +278,7 @@ ThoughtCoding/
 - **代码执行工具**: 执行代码片段 (`CodeExecutorTool.java`)
 - **搜索工具**: 文件内容搜索 (`GrepSearchTool.java`)
 - **扩展性**: 容易添加新工具，基于 `BaseTool` 基类
+- **工具提供者**: `ToolProvider.java` 定义工具提供接口，支持动态注册
 
 ### `src/main/java/com/thoughtcoding/mcp/` - MCP 功能
 
@@ -216,32 +287,34 @@ ThoughtCoding/
 `MCPService.java` - MCP 服务管理器
 
 - **功能**: MCP 服务的核心管理器
+- **特性**: 管理多个 MCP 服务器连接，统一工具注册
 
 `MCPClient.java` - MCP 客户端
 
 - **功能**: 单个 MCP 服务器的客户端实现
+- **特性**: JSON-RPC 通信，进程管理，错误处理
 
 `MCPToolManager.java` - MCP 工具管理器
 
 - **功能**: 管理所有 MCP 工具的统一入口
+- **特性**: 工具发现、注册、调用路由
 
 `MCPToolAdapter.java` - MCP 工具适配器
 
 - **功能**: 将 MCP 工具适配为内部 BaseTool 格式
+- **特性**: 统一工具接口，隐藏 MCP 通信细节
 
-**功能**: 定义 MCP 协议的数据结构和类型
+**`mcp/model/`** - MCP 协议数据模型
 
-**`model/`**
+**功能**: 定义 MCP 协议的数据结构和类型（位于 `mcp` 包下的子包）
 
-`MCPRequest.java` : MCP 请求
+- `MCPRequest.java` - MCP 请求模型
+- `MCPResponse.java` - MCP 响应模型
+- `MCPError.java` - MCP 错误模型
+- `MCPTool.java` - MCP 工具定义
+- `InputSchema.java` - 输入模式定义
 
-`MCPResponse.java` : MCP 响应
-
-`MCPError.java` : MCP 错误
-
-`MCPTool.java` : MCP 工具定义
-
-`InputSchema.java` : 输入模式定义
+**注意**: `mcp/model/` 是 MCP 协议专用的数据模型，与独立的 `model/` 包（通用数据模型）不同。
 
 ### `src/main/java/com/thoughtcoding/ui/` - 用户界面
 
@@ -264,14 +337,20 @@ ThoughtCoding/
 **`component/`**
 
 - **`ChatRenderer.java`**：聊天渲染器
+  - **特性**：实时渲染 AI 响应，支持代码高亮
 - **`InputHandler.java`**：输入处理器
+  - **特性**：处理用户输入，支持命令补全和历史记录
 - **`ProgressIndicator.java`**：进度指示器
+  - **特性**：显示任务执行进度，提供视觉反馈
 - **`ToolDisplay.java`**：工具显示类
+  - **特性**：格式化显示工具调用和执行结果
 - **`StatusBar.java`**：状态栏类
+  - **特性**：显示当前状态信息（模型、会话、Token 使用等）
 
-`themes/`
+**`themes/`**
 
 - **`ColorScheme.java`**：颜色方案类
+  - **特性**：定义终端颜色主题，支持自定义配色
 
 ## ⚙ 配置说明
 
@@ -394,6 +473,17 @@ mcp:
         - "@modelcontextprotocol/server-github"
         - "--token"
         - "your_github_token_here"
+        
+    # GitLab - GitLab 代码仓库操作工具（新增配置）
+    - name: "gitlab"
+      command: "npx"
+      enabled: false  # 按需开启，首次使用建议先设为 false 测试
+      args:
+        - "@modelcontextprotocol/server-gitlab"  # GitLab 对应的 MCP 服务插件
+        - "YOUR_GITLAB_PERSONAL_ACCESS_TOKEN"  # 🔥 替换为你的 GitLab 个人访问令牌
+        - "https://gitlab.com"  # GitLab 实例地址（私有部署请替换为自定义域名，如 https://gitlab.yourcompany.com）
+        - "your-gitlab-username"  # 你的 GitLab 用户名（可选，部分场景用于权限校验）
+        - "your-project-id"  # 目标项目 ID（可选，指定默认操作的项目，不填则支持全权限访问）
 
     #Weather
     - name: "weather"
@@ -619,16 +709,20 @@ SessionData session = new SessionData("session-id", "标题", "model");
 #### **MCP 功能特性：**
 
 - ✅ **多服务器支持** - 可同时连接多个 MCP 服务器
-- ✅ **预定义工具** - 内置常用 MCP 工具快捷方式
-- ✅ **动态连接** - 运行时按需连接/断开 MCP 服务器
-- ✅ **协议兼容** - 支持标准 MCP 协议规范
+- ✅ **预定义工具** - 内置常用 MCP 工具快捷方式，支持 `/mcp tools` 一键连接
+- ✅ **动态连接** - 运行时按需连接/断开 MCP 服务器，无需重启
+- ✅ **协议兼容** - 支持标准 MCP 协议规范（JSON-RPC over stdio）
+- ✅ **工具适配** - 自动将 MCP 工具适配为统一的 BaseTool 接口
+- ✅ **自动发现** - 启动时自动发现并注册已配置的 MCP 工具
 
 #### **支持的 MCP 工具：**
 
-- 🔧 **文件系统工具** - 本地文件操作
-- 🗃️ **数据库工具** - SQLite、PostgreSQL 查询
-- 🌐 **网络工具** - Web 搜索、API 调用
+- 🔧 **文件系统工具** - 本地文件操作（filesystem）
+- 🗃️ **数据库工具** - SQLite、PostgreSQL、MySQL 查询
+- 🌐 **网络工具** - GitHub API、Web 搜索、API 调用
 - 📊 **计算工具** - 数学计算、数据处理
+- 🌤️ **天气工具** - 天气查询服务
+- 🔍 **搜索工具** - 文件搜索、内容检索
 
 #### **集成方式：**
 
@@ -703,14 +797,17 @@ SessionData session = new SessionData("session-id", "标题", "model");
 # 显示可用的预定义工具
 /mcp predefined
 
+# 快捷连接预定义工具（支持多个，逗号分隔）
+/mcp tools filesystem,sqlite,github
+
 # 断开 MCP 服务器连接
 /mcp disconnect filesystem
 
-# 连接基础开发工具包
-/mcp tools filesystem,sqlite,git
-
-# 连接文件系统服务器
+# 连接文件系统服务器（动态连接）
 /mcp connect filesystem npx @modelcontextprotocol/server-filesystem
+
+# 连接 GitHub 服务器
+/mcp connect github npx @modelcontextprotocol/server-github --token your_token
 ```
 
 ## 🤝 协作指南

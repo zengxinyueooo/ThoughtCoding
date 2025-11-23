@@ -84,7 +84,7 @@ ThoughtCoding/
 │   │   ├── MCPClient.java             # MCP客户端（JSON-RPC通信）
 │   │   ├── MCPToolManager.java        # MCP工具管理器
 │   │   ├── MCPToolAdapter.java        # MCP工具适配器（转BaseTool）
-│   │   └── model/
+│   │   └── model/                     # MCP协议数据模型
 │   │       ├── MCPTool.java           # MCP工具模型
 │   │       ├── MCPRequest.java        # MCP请求模型
 │   │       ├── MCPResponse.java       # MCP响应模型
@@ -98,7 +98,7 @@ ThoughtCoding/
 │   │   ├── MCPConfig.java             # MCP配置模型
 │   │   └── MCPServerConfig.java       # MCP服务器配置
 │   │
-│   ├── model/                         # 数据模型层（Model Layer）
+│   ├── model/                         # 通用数据模型层（Model Layer）
 │   │   ├── ChatMessage.java           # 聊天消息模型
 │   │   ├── ToolCall.java              # 工具调用模型
 │   │   ├── ToolExecution.java         # 工具执行记录
