@@ -178,6 +178,10 @@ public class ThoughtCodingContext {
             // 🔥 直接传递三个参数，不再创建 Map
             var tools = mcpService.connectToServer(serverName, command, args);
             if (!tools.isEmpty()) {
+                // 注册工具（静默）
+                for (var tool : tools) {
+                    toolRegistry.register(tool);
+                }
                 System.out.println("✓ 成功连接 MCP 服务器: " + serverName +
                         " (" + tools.size() + " 个工具)");
                 return true;
