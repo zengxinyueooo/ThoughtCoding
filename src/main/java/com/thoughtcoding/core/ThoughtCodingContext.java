@@ -202,6 +202,12 @@ public class ThoughtCodingContext {
         try {
             var toolNames = java.util.Arrays.asList(toolsList.split(","));
             var tools = mcpToolManager.connectPredefinedTools(toolNames);
+            if (!tools.isEmpty()) {
+                // 注册工具（静默）
+                for (var tool : tools) {
+                    toolRegistry.register(tool);
+                }
+            }
             System.out.println("✓ 已连接 " + tools.size() + " 个预定义 MCP 工具");
             return !tools.isEmpty();
         } catch (Exception e) {
