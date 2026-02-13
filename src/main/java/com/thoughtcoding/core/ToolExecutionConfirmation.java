@@ -49,8 +49,9 @@ public class ToolExecutionConfirmation {
                 String prompt = "\n请选择 [1/2/3]: ";
                 String response = lineReader.readLine(prompt);
 
+                retryCount++;
+
                 if (response == null) {
-                    retryCount++;
                     if (retryCount < maxRetries) {
                         ui.displayWarning("⚠️  输入读取失败，正在重试... (" + retryCount + "/" + maxRetries + ")");
                         Thread.sleep(100);
