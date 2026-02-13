@@ -556,6 +556,12 @@ public class AgentLoop {
 
             if (tool == null) {
                 context.getUi().displayError("❌ 工具不存在: " + toolCall.getToolName());
+
+                // 🔥 将错误添加到历史，让 AI 知道工具执行失败
+                ChatMessage errorMessage = new ChatMessage("system",
+                    "Tool execution failed: Tool '" + toolCall.getToolName() + "' not found.");
+                history.add(errorMessage);
+
                 return false;
             }
 
@@ -578,18 +584,66 @@ public class AgentLoop {
                     context.getUi().getTerminal().writer().flush();
                 }
 
+                // 🔥 关键修复：将工具执行结果添加到历史记录中
+                // 这样 AI 在下一轮对话中就能看到工具的执行结果
+                ChatMessage toolResultMessage = new ChatMessage("system",
+                    formatToolResultForHistory(toolCall, result));
+                history.add(toolResultMessage);
+
                 return true;
             } else {
                 context.getUi().displayError("❌ 失败: " + result.getError());
+
+                // 🔥 将错误信息也添加到历史
+                ChatMessage errorMessage = new ChatMessage("system",
+                    "Tool execution failed: " + result.getError());
+                history.add(errorMessage);
+
                 return false;
             }
 
         } catch (Exception e) {
             context.getUi().displayError("❌ 执行异常: " + e.getMessage());
+
+            // 🔥 将异常也添加到历史
+            ChatMessage exceptionMessage = new ChatMessage("system",
+                "Tool execution exception: " + e.getMessage());
+            history.add(exceptionMessage);
+
             // 调试时可以取消注释
             // e.printStackTrace();
             return false;
         }
+    }
+
+    /**
+     * 🔥 格式化工具执行结果，用于添加到历史记录
+     * 让 AI 能够理解工具的执行结果
+     */
+    private String formatToolResultForHistory(ToolCall toolCall, ToolResult result) {
+        StringBuilder formatted = new StringBuilder();
+
+        // 工具名称和参数
+        formatted.append("Tool '").append(toolCall.getToolName()).append("' executed successfully");
+
+        // 如果有参数，添加参数信息
+        if (toolCall.getParameters() != null && !toolCall.getParameters().isEmpty()) {
+            formatted.append(" with parameters: ");
+            formatted.append(convertParametersToJson(toolCall.getParameters()));
+        }
+
+        formatted.append("\n");
+
+        // 工具输出结果
+        String output = result.getOutput();
+        if (output != null && !output.trim().isEmpty()) {
+            formatted.append("Result:\n");
+            formatted.append(output);
+        } else {
+            formatted.append("Operation completed successfully.");
+        }
+
+        return formatted.toString();
     }
 
     /**

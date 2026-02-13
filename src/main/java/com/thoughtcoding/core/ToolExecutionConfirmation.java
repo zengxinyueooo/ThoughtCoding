@@ -64,7 +64,7 @@ public class ToolExecutionConfirmation {
                 String trimmed = response.trim();
 
                 // 处理用户选择
-                return switch (trimmed) {
+                ActionType result = switch (trimmed) {
                     case "1" -> {
                         ui.displayInfo("✅ 你选择了：" + getOption1Description(execution.toolName()));
                         yield ActionType.CREATE_ONLY;
@@ -82,6 +82,11 @@ public class ToolExecutionConfirmation {
                         yield null; // 继续循环
                     }
                 };
+
+                // 如果得到了有效结果，返回；否则继续循环
+                if (result != null) {
+                    return result;
+                }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 ui.displayError("❌ 操作被中断");
