@@ -4,6 +4,8 @@ import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.ui.AnsiColors;
 import org.jline.terminal.Terminal;
 
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 
@@ -20,7 +22,7 @@ public class ChatRenderer {
     }
 
     public void renderUserMessage(ChatMessage message) {
-        String timestamp = String.format(String.valueOf(timeFormatter));
+        String timestamp = LocalDateTime.now().format(timeFormatter);
         String formattedMessage = String.format("%s[%s] %sYou:%s %s",
                 AnsiColors.BRIGHT_BLACK, timestamp, AnsiColors.BRIGHT_BLUE, AnsiColors.RESET, message.getContent());
 
