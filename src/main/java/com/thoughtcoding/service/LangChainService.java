@@ -31,6 +31,11 @@ public class LangChainService implements AIService {
     private volatile boolean shouldStop = false;
     private boolean hasTriggeredToolCall = false;
 
+    // 用于智能识别代码块意图
+    private String lastCodeBlock = null;
+    private String lastCodeFileName = null;
+    private static final int CONTEXT_THRESHOLD = 50; // 判断阈值: 代码块后文字少于50字符则触发工具调用
+
     public LangChainService(AppConfig appConfig, ToolRegistry toolRegistry, ContextManager contextManager) {
         this.appConfig = appConfig;
         this.contextManager = contextManager;
@@ -125,7 +130,8 @@ public class LangChainService implements AIService {
                             confirmationDisplayed = true;
                         }
 
-                        // ❌ 不输出代码块开始标记（```java）
+                        // ✅ 输出代码块开始标记
+                        messageHandler.accept(new ChatMessage("assistant", token));
                         return;
                     }
 
@@ -134,30 +140,29 @@ public class LangChainService implements AIService {
                         inCodeBlock = false;
                         codeBlockCount++;
 
-                        // ❌ 不输出代码块结束标记（```）
+                        // ✅ 先输出代码块结束标记
+                        messageHandler.accept(new ChatMessage("assistant", token));
 
-                        // 触发工具调用
+                        // ✅ 记录代码块信息,但不立即触发工具调用
                         if (confirmationDisplayed && codeBlockCount >= 2) {
                             String cleanCode = codeBuffer.toString();
                             // 移除语言标记（如 "java"、"python"）
                             cleanCode = cleanCode.replaceFirst("^\\s*(java|python|javascript|cpp|c|python3|js|ts)\\s*\n", "");
 
-                            triggerToolCallWithCode(detectedFileName, cleanCode.trim());
-                            hasTriggeredToolCall = true;
+                            lastCodeBlock = cleanCode.trim();
+                            lastCodeFileName = detectedFileName;
+
+                            // ❌ 移除这行: hasTriggeredToolCall = true;
+                            // 不再阻止后续 token 输出
                         }
 
                         return;
                     }
 
-                    // 🔥 在代码块内，输出纯代码内容（跳过语言标记）
+                    // 🔥 在代码块内，输出所有内容（包括语言标记）
                     if (inCodeBlock) {
-                        // 跳过第一个 token 如果它是语言标记（java、python 等）
-                        if (codeBuffer.length() == 0 && token.trim().matches("(java|python|javascript|cpp|c|python3|js|ts)")) {
-                            return; // 跳过语言标记，不输出
-                        }
-
+                        // ✅ 输出所有内容,包括语言标记
                         codeBuffer.append(token);
-                        // ✅ 输出纯代码内容
                         messageHandler.accept(new ChatMessage("assistant", token));
                         return;
                     }
@@ -178,6 +183,9 @@ public class LangChainService implements AIService {
                     //                                                            参数顺序：
                     //                                                            toolName, params, result, success, executionTime, streamingTriggered
 
+                    // ✅ 在这里设置标志位,防止 detectAndTriggerToolCall() 重复触发
+                    hasTriggeredToolCall = true;
+
                     // 立即触发工具调用处理器
                     if (toolCallHandler != null) {
                         toolCallHandler.accept(toolCall);
@@ -187,6 +195,47 @@ public class LangChainService implements AIService {
                 @Override
                 public void onComplete(Response<dev.langchain4j.data.message.AiMessage> response) {
                     try {
+                        // ✅ 智能判断是否触发工具调用(基于代码块)
+                        if (lastCodeBlock != null && !lastCodeBlock.isEmpty()) {
+                            String fullText = fullResponse.toString();
+
+                            // 找到最后一个代码块结束位置
+                            int lastCodeBlockEndIndex = fullText.lastIndexOf("```");
+                            if (lastCodeBlockEndIndex > 0) {
+                                // ✅ 新增: 检查代码块前的上下文(前100字符)
+                                int lastCodeBlockStartIndex = fullText.lastIndexOf("```", lastCodeBlockEndIndex - 1);
+                                boolean isExplanation = false;
+
+                                if (lastCodeBlockStartIndex > 0) {
+                                    // 获取代码块前的文字(最多100字符)
+                                    int startPos = Math.max(0, lastCodeBlockStartIndex - 100);
+                                    String beforeCodeBlock = fullText.substring(startPos, lastCodeBlockStartIndex).trim();
+
+                                    // 检查是否包含讲解相关的关键词
+                                    String[] explainKeywords = {"讲解", "解释", "说明", "介绍", "演示", "展示", "分析", "理解"};
+                                    for (String keyword : explainKeywords) {
+                                        if (beforeCodeBlock.contains(keyword)) {
+                                            isExplanation = true;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                // ✅ 如果是讲解,不触发工具调用
+                                if (isExplanation) {
+                                    // 清理状态但不触发工具调用
+                                    lastCodeBlock = null;
+                                    lastCodeFileName = null;
+                                } else {
+                                    // 原有的 CONTEXT_THRESHOLD 逻辑
+                                    String afterCodeBlock = fullText.substring(lastCodeBlockEndIndex + 3).trim();
+                                    if (afterCodeBlock.length() < CONTEXT_THRESHOLD) {
+                                        triggerToolCallWithCode(lastCodeFileName, lastCodeBlock);
+                                    }
+                                }
+                            }
+                        }
+
                         detectAndTriggerToolCall(fullResponse.toString());
 
                         if (shouldStop && !fullResponse.isEmpty()) {
@@ -211,6 +260,15 @@ public class LangChainService implements AIService {
                         isGenerating = false;
                         shouldStop = false;
                         completionFuture.complete(null); // 🔥 通知主线程：流式响应已完成
+
+                        // ✅ 清理代码块状态
+                        lastCodeBlock = null;
+                        lastCodeFileName = null;
+                        codeBuffer.setLength(0);
+                        detectedFileName = null;
+                        confirmationDisplayed = false;
+                        codeBlockCount = 0;
+                        inCodeBlock = false;
                     }
                 }
 
@@ -325,6 +383,10 @@ public class LangChainService implements AIService {
             return true;
         }
 
+        // ✅ 新增: 检查响应中是否包含代码块
+        // 用于判断是否应该触发文件写入操作
+        boolean hasCodeBlock = aiResponse.contains("```");
+
         String lowerResponse = aiResponse.toLowerCase();
 
         // 🔥 优先检测简化格式（⏺ Read/Write/Bash/List）- 这些格式必须严格执行
@@ -360,6 +422,12 @@ public class LangChainService implements AIService {
 
         // ⏺ Write(文件名) - 注意：这个只是标记，实际内容在代码块中
         if (aiResponse.contains("⏺ Write(") || lowerResponse.matches(".*⏺\\s*write\\s*\\(.*")) {
+            // ✅ 只有当响应中包含代码块时才触发文件写入
+            if (!hasCodeBlock) {
+                // 纯文字讲解中提到了 Write,但没有代码块,不触发
+                return false;
+            }
+
             String fileName = extractFromSimplifiedFormat(aiResponse, "write");
             String content = extractFileContent(aiResponse);
             if (fileName != null && content != null) {
