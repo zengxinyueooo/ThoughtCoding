@@ -30,7 +30,8 @@ public class InputHandler {
 
     public String readInput(String prompt) {
         try {
-            return lineReader.readLine(prompt);
+            String line = lineReader.readLine(prompt);
+            return line.replace("\\","\\\\");
         } catch (UserInterruptException e) {
             throw new RuntimeException("Operation cancelled by user");
         } catch (EndOfFileException e) {
