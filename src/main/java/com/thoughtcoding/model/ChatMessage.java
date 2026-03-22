@@ -14,7 +14,7 @@ import java.util.UUID;
 public class ChatMessage {
     private final String id;
     private final String role; // "user", "assistant", "system"
-    private final String content;
+    private String content; //压缩工具结果需要其为变量
     private final String timestamp;
     private final String sessionId;
     @JsonIgnore  // 忽略这些字段的序列化
@@ -86,6 +86,10 @@ public class ChatMessage {
 
     public void setContent() {
         String content = "";
+    }
+
+    public void setContent(String content) {
+        this.content = content;
     }
 
     public void setTimestamp(String s) {
