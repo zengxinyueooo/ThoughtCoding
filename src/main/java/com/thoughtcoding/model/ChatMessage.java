@@ -13,7 +13,7 @@ import java.util.UUID;
 @Data
 public class ChatMessage {
     private final String id;
-    private final String role; // "user", "assistant", "system"
+    private final String role; // "user", "assistant", "system", "tool"
     private final String content;
     private final String timestamp;
     private final String sessionId;
@@ -25,6 +25,9 @@ public class ChatMessage {
 
     @JsonIgnore
     private boolean assistantMessage;
+
+    @JsonIgnore
+    private boolean toolMessage;
     // 无参构造函数 - 需要提供默认值
     public ChatMessage() {
         this.role = "user";
@@ -79,6 +82,8 @@ public class ChatMessage {
     public boolean isSystemMessage() {
         return "system".equals(role);
     }
+
+    public boolean isToolMessage() { return "tool".equals(role); }
 
     public void setRole() {
         String role = "user";
