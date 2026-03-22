@@ -4,11 +4,10 @@ import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.tools.ToolRegistry;
-import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.model.StreamingResponseHandler;
-import dev.langchain4j.model.chat.StreamingChatLanguageModel;
+import dev.langchain4j.model.chat.StreamingChatModel;
+import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
-import dev.langchain4j.model.output.Response;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -24,7 +23,7 @@ public class LangChainService implements AIService {
     private final ContextManager contextManager;
     private Consumer<ChatMessage> messageHandler;
     private Consumer<ToolCall> toolCallHandler;
-    private StreamingChatLanguageModel streamingChatModel;
+    private StreamingChatModel streamingChatModel;
 
     // 用于跟踪生成状态
     private volatile boolean isGenerating = false;
@@ -53,15 +52,15 @@ public class LangChainService implements AIService {
         }
     }
 
-    private StreamingChatLanguageModel createDeepSeekModel(AppConfig.ModelConfig config) {
+    private StreamingChatModel createDeepSeekModel(AppConfig.ModelConfig config) {
         return OpenAiStreamingChatModel.builder()
                 .baseUrl(config.getBaseURL())
                 .apiKey(config.getApiKey())
                 .modelName(config.getName())
                 .temperature(config.getTemperature())
                 .maxTokens(config.getMaxTokens())
-                .logRequests(true)
-                .logResponses(true)
+                .logRequests(false)
+                .logResponses(false)
                 .build();
     }
 
@@ -93,7 +92,7 @@ public class LangChainService implements AIService {
             // 移除提示信息，保持输出简洁
             // System.out.println("🚀 Sending request to DeepSeek API...");
 
-            streamingChatModel.generate(messages, new StreamingResponseHandler<AiMessage>() {
+            streamingChatModel.chat(messages, new StreamingChatResponseHandler() {
                 private final StringBuilder codeBuffer = new StringBuilder();
                 private boolean confirmationDisplayed = false;
                 private boolean inCodeBlock = false;
@@ -101,7 +100,7 @@ public class LangChainService implements AIService {
                 private int codeBlockCount = 0;
 
                 @Override
-                public void onNext(String token) {
+                public void onPartialResponse(String token){
                     if (shouldStop || hasTriggeredToolCall) {
                         return;
                     }
@@ -119,7 +118,7 @@ public class LangChainService implements AIService {
                         inCodeBlock = true;
                         codeBlockCount++;
 
-                        // 检测文件名但不显示任何提示
+                         // 检测文件名但不显示任何提示
                         if (!confirmationDisplayed) {
                             if (detectedFileName == null) {
                                 detectedFileName = extractFileNameFromText(currentText);
@@ -171,7 +170,6 @@ public class LangChainService implements AIService {
                     messageHandler.accept(new ChatMessage("assistant", token));
                 }
 
-
                 private void triggerToolCallWithCode(String fileName, String code) {
                     // 🔥 创建工具调用并触发
                     java.util.Map<String, Object> params = new java.util.HashMap<>();
@@ -193,7 +191,7 @@ public class LangChainService implements AIService {
                 }
 
                 @Override
-                public void onComplete(Response<dev.langchain4j.data.message.AiMessage> response) {
+                public void onCompleteResponse(ChatResponse chatResponse) {
                     try {
                         // ✅ 智能判断是否触发工具调用(基于代码块)
                         if (lastCodeBlock != null && !lastCodeBlock.isEmpty()) {
@@ -241,7 +239,7 @@ public class LangChainService implements AIService {
                         if (shouldStop && !fullResponse.isEmpty()) {
                             String cleanContent = removeToolCommandText(fullResponse.toString());
                             ChatMessage truncatedMessage = new ChatMessage("assistant",
-                                cleanContent + "\n\n💡 [生成已被用户停止]");
+                                    cleanContent + "\n\n💡 [生成已被用户停止]");
                             history.add(truncatedMessage);
                             return;
                         }
