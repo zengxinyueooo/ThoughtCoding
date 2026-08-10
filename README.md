@@ -1,3 +1,5 @@
+
+
 # ThoughtCoding CLI
 
 ![ThoughtCoding CLI](picture.png)
@@ -318,7 +320,7 @@ ThoughtCoding/
 `PermissionGate.java`
 
 - **功能**：统一权限管道
-- **特性**：`check` 按工具名 switch 决策 `ALLOW`/`WARN`/`DENY`——write/edit/bash 固定 WARN（弹确认），read/glob 越界才 WARN，todo_write/skill/subAgent 恒 ALLOW，未知工具 WARN；bash 先过 `BASH_DENY_PATTERNS` 硬 DENY。注意 `Sandbox.resolve` 仅做路径规范化、**不拦截越界**，写操作可落在 workspace 之外
+- **特性**：`check` 按工具名 switch 决策 `ALLOW`/`WARN`/`DENY`——write/edit/bash 固定 WARN（弹确认），read/glob 越界才 WARN， todo_write/skill/subAgent 恒 ALLOW，未知工具 WARN；bash 先过 `BASH_DENY_PATTERNS` 硬 DENY。注意 `Sandbox.resolve` 仅做路径规范化、**不拦截越界**，写操作可落在 workspace 之外
 
 `PermissionHook.java` / `PermissionResult.java`
 
@@ -601,7 +603,7 @@ cd ThoughtCoding
 
 #### ⌨️ 终端命令方式 : 动态连接，适合临时工具
 
-启动应用后，命令连接需要的工具，
+启动应用后，输入以下命令连接需要的工具：
 
 ```
 /mcp connect github npx @modelcontextprotocol/server-github
@@ -865,4 +867,3 @@ SessionData session = new SessionData("session-id", "标题", "model");
 ------
 
 **ThoughtCoding** **CLI** - 让 AI 编程助手更智能、更易用！ 🚀
-
