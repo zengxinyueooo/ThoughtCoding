@@ -265,7 +265,8 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                     ui.getTerminal().writer().println();
                     ui.getTerminal().writer().flush();
 
-                    String input = ui.readInput("thought> ");
+                    String input = ui.readInput(
+                            com.thoughtcoding.security.PlanMode.isActive() ? "plan> " : "thought> ");
 
                     if (input == null || input.trim().isEmpty()) {
                         continue;
@@ -334,6 +335,12 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                         continue;
                     }
 
+                    // 📋 计划模式（Plan Mode）：只读研究 → 产出计划 → 批准后执行
+                    if (trimmedInput.equals("/plan") || trimmedInput.startsWith("/plan ")) {
+                        handlePlanCommand(trimmedInput, agentLoop);
+                        continue;
+                    }
+
                     // 🚀 新增：检查是否是直接命令执行
                     //TODO ：优化正则检测，降低误判率
                     if (directCommandExecutor.shouldExecuteDirectly(trimmedInput)) {
@@ -389,6 +396,92 @@ public class ThoughtCodingCommand implements Callable<Integer> {
         } catch (WorktreeManager.WorktreeException e) {
             ui.displayWarning("⚠️  SubAgent Worktree 启动巡检失败: " + e.getMessage());
         }
+    }
+
+    /**
+     * 计划模式（Plan Mode）命令入口。
+     *
+     * <pre>
+     *   /plan            未激活则进入；已激活显示用法
+     *   /plan on         进入计划模式（提示符变 plan>，模型只能只读研究并产出计划）
+     *   /plan approve    批准计划：把最近一轮 assistant 输出（计划正文）注入为 user 消息，
+     *                    退出计划模式——下一轮用户输入即按计划执行
+     *   /plan exit       放弃计划并退出计划模式（已产出的计划留在历史中但不会被标记执行）
+     *   /plan status     显示当前模式
+     * </pre>
+     *
+     * <p>权限约束由 {@code PermissionGate} 在计划模式下强制（写类工具 DENY、bash 只读白名单），
+     * 本命令只负责模式切换与计划批准的编排。
+     */
+    private void handlePlanCommand(String command, AgentLoop agentLoop) {
+        ThoughtCodingUI ui = context.getUi();
+        String[] parts = command.trim().split("\\s+");
+        String action = parts.length < 2 ? "" : parts[1].toLowerCase();
+
+        switch (action) {
+            case "" -> {
+                if (com.thoughtcoding.security.PlanMode.isActive()) {
+                    displayPlanHelp(ui);
+                } else {
+                    com.thoughtcoding.security.PlanMode.enter();
+                    ui.displayInfo("""
+                            📋 已进入计划模式 (Plan Mode)，提示符已切换为 plan>。
+                               模型现在只能读代码、跑只读命令，产出实施计划后停止。
+                               审阅计划后：/plan approve 批准并执行 | /plan exit 放弃""");
+                }
+            }
+            case "on" -> {
+                com.thoughtcoding.security.PlanMode.enter();
+                ui.displayInfo("📋 已进入计划模式 (Plan Mode)。输入 /plan approve 批准计划，/plan exit 放弃。");
+            }
+            case "exit", "off" -> {
+                com.thoughtcoding.security.PlanMode.exit();
+                ui.displayInfo("✅ 已退出计划模式，恢复正常执行。");
+            }
+            case "approve", "yes", "y" -> {
+                if (!com.thoughtcoding.security.PlanMode.isActive()) {
+                    ui.displayWarning("⚠️  当前不在计划模式。先用 /plan 进入。");
+                    return;
+                }
+                String plan = extractLastAssistantText(agentLoop);
+                if (plan == null) {
+                    ui.displayWarning("⚠️  历史中没有可批准的计划文本。让模型先完成研究并输出计划，"
+                            + "或用 /plan exit 退出。");
+                    return;
+                }
+                agentLoop.injectUserMessage(
+                        "[用户已批准以下实施计划，请严格按计划开始执行]\n\n" + plan);
+                com.thoughtcoding.security.PlanMode.exit();
+                ui.displaySuccess("✅ 计划已批准并注入上下文，已退出计划模式。发送消息即可按计划开始执行。");
+            }
+            case "status" -> ui.displayInfo(
+                    "📋 当前模式: " + com.thoughtcoding.security.PlanMode.current());
+            default -> displayPlanHelp(ui);
+        }
+    }
+
+    private void displayPlanHelp(ThoughtCodingUI ui) {
+        ui.displayInfo("""
+                📋 计划模式 (Plan Mode) 用法：
+                   /plan            进入计划模式（已激活时显示本帮助）
+                   /plan on         进入计划模式
+                   /plan approve    批准最近产出的计划并退出计划模式
+                   /plan exit       放弃计划并退出
+                   /plan status     查看当前模式""");
+    }
+
+    /** 倒序找最近一条纯文本 assistant 消息（无工具调用）作为计划正文；没有则返回 null。 */
+    private String extractLastAssistantText(AgentLoop agentLoop) {
+        List<ChatMessage> history = agentLoop.getHistory();
+        for (int i = history.size() - 1; i >= 0; i--) {
+            ChatMessage m = history.get(i);
+            if (m != null && "assistant".equals(m.getRole())
+                    && !m.hasToolCalls()
+                    && m.getContent() != null && !m.getContent().isBlank()) {
+                return m.getContent();
+            }
+        }
+        return null;
     }
 
     private void handleAgentsCommand(String command) {
@@ -743,6 +836,11 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                                                                   /list         查看所有会话
                                                                   /clear        清空屏幕
                                                                   /help         显示帮助信息
+                                                               \s
+                                                                📋 计划模式：
+                                                                  /plan          进入计划模式（只读研究后产出计划）
+                                                                  /plan approve  批准计划并开始执行
+                                                                  /plan exit     放弃计划
                                                                \s
                                                                 🔧 直接命令：
                                                                   java version  直接执行Java命令

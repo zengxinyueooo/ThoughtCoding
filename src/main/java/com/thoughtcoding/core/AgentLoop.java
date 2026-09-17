@@ -79,6 +79,18 @@ public class AgentLoop {
         }
     }
 
+    /**
+     * 把一段文本作为 user 消息追加进历史（如 /plan approve 注入已批准的实施计划），不触发 LLM。
+     * 写入后立即持久化：批准后用户可能直接退出，计划不能只留在内存。
+     */
+    public void injectUserMessage(String content) {
+        if (content == null || content.isBlank()) {
+            return;
+        }
+        history.add(new ChatMessage("user", content));
+        context.getSessionService().saveSession(sessionId, history);
+    }
+
     public void processInput(String input) {
         processInput(input, new CancelToken());
     }
@@ -120,8 +132,10 @@ public class AgentLoop {
             runNativeToolLoop(token, recalledMemories);
 
             // ── 记忆：本轮结束后同步储存新记忆 + 触发条件时整理(dream) ──
-            // 被取消（stop）的回合不写记忆：半截对话不构成可靠记忆，dream 的整理阈值计数也不应前移
-            if (memory != null && !token.isCancelled()) {
+            // 被取消（stop）的回合不写记忆：半截对话不构成可靠记忆，dream 的整理阈值计数也不应前移。
+            // 计划模式回合同样不写：只读研究阶段产生的是过程性信息，不是沉淀下来的事实。
+            if (memory != null && !token.isCancelled()
+                    && !com.thoughtcoding.security.PlanMode.isActive()) {
                 memory.remember(history);
                 memory.dream();
             }
@@ -199,6 +213,11 @@ public class AgentLoop {
                     stopContinuations++;
                     history.add(new ChatMessage("user", buildStopContinuationPrompt(stopResult)));
                     continue;
+                }
+                if (com.thoughtcoding.security.PlanMode.isActive()) {
+                    // 计划模式自然终止 = 计划已产出：引导用户走批准/放弃流程
+                    context.getUi().displayInfo(
+                            "📋 计划模式：计划已生成。输入 /plan approve 批准并开始执行，或 /plan exit 放弃。");
                 }
                 break; // 模型只产出文本 → 自然终止
             }

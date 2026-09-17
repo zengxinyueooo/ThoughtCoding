@@ -510,9 +510,31 @@ public class ContextManager {
         sb.append("3. 只在确有需要时调用工具；纯咨询类问题直接用中文回答，不调用工具。\n");
         sb.append("4. 完成任务后用简洁自然的中文给出总结。\n");
 
+        appendPlanModeInstructions(sb);
         appendSkillCatalog(sb);
         appendMemory(sb);
         return sb.toString();
+    }
+
+    /**
+     * 计划模式（{@link PlanMode}）激活时追加的行为约束段。
+     *
+     * <p>放 system prompt 而非 {@code <system-reminder>} 尾注：模式约束需贯穿整轮研究行为，
+     * 语义上属于系统级规则；且模式只在切换瞬间变化一次，之后前缀重新稳定，前缀缓存损失可控。
+     * 与权限门的硬拒绝（write/edit/bash 白名单外一律 DENY）互为软硬两层——
+     * 提示让模型主动配合，权限门兜住越界。
+     */
+    private void appendPlanModeInstructions(StringBuilder sb) {
+        if (!com.thoughtcoding.security.PlanMode.isActive()) {
+            return;
+        }
+        sb.append("\n## 当前模式：计划模式 (Plan Mode)\n");
+        sb.append("- 你现在处于【计划模式】：只能研究与规划，禁止任何修改操作。"
+                + "写文件、改文件、有副作用的命令都会被系统直接拒绝。\n");
+        sb.append("- 允许的手段：read/glob 阅读代码、只读 shell 命令（git log/diff/status、ls、grep 等）、"
+                + "todo_write 记录规划、skill 加载技能说明。\n");
+        sb.append("- 充分研究后，输出完整的实施计划，包含：目标、分步方案、涉及文件、风险与权衡。\n");
+        sb.append("- 计划输出后即停止，等待用户批准；用户批准后才会进入执行阶段。\n");
     }
 
     /** 技能目录（名称+简介）常驻注入 system prompt；完整正文由模型显式调用 skill 工具按需加载。 */
@@ -592,6 +614,7 @@ public class ContextManager {
         sb.append("3. 完成后用简洁的中文给出最终结论——这段结论是唯一会回传给主Agent的内容，中间过程不会保留，务必把关键结果讲清楚。\n");
         sb.append("4. 当前目录可能是隔离的 Git worktree；不要切换分支、创建 worktree 或自行合并。你的改动会由系统在结束时保存到独立分支。\n");
 
+        appendPlanModeInstructions(sb);
         appendSkillCatalog(sb);
         return sb.toString();
     }
