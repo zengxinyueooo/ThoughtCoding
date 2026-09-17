@@ -23,6 +23,12 @@ import java.util.function.Consumer;
  * toolExecutionRequests，由 AgentLoop 执行并把结果按 id 配对回喂，形成 agentic 循环。
  */
 public class LangChainService implements AIService {
+
+    /** 可重试错误的最大重发次数（不含首次请求）。 */
+    static final int MAX_STREAM_RETRIES = 3;
+    /** 指数式退避间隔；TPM 限流按分钟窗口恢复，末档 45s 覆盖大半窗口。 */
+    static final long[] STREAM_RETRY_DELAYS_MS = {5_000, 20_000, 45_000};
+
     private final AppConfig appConfig;
     private final ContextManager contextManager;
     private final ToolRegistry toolRegistry;   // 用于生成 ToolSpecification
@@ -33,6 +39,14 @@ public class LangChainService implements AIService {
     // 生成状态
     private volatile boolean isGenerating = false;
     private volatile boolean shouldStop = false;
+
+    // 限流/瞬时错误的重发调度器：单线程、daemon（不阻止 JVM 退出；无活跃任务时无资源占用）
+    private final java.util.concurrent.ScheduledExecutorService retryScheduler =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "llm-retry-scheduler");
+                t.setDaemon(true);
+                return t;
+            });
 
     public LangChainService(AppConfig appConfig, ToolRegistry toolRegistry, ContextManager contextManager) {
         this.appConfig = appConfig;
@@ -93,7 +107,6 @@ public class LangChainService implements AIService {
         isGenerating = true;
         shouldStop = false;
 
-        final StringBuilder fullResponse = new StringBuilder();
         final CompletableFuture<Void> completionFuture = new CompletableFuture<>();
 
         // 取消传播：token 触发时提前完成 future，让下面的 get() 立即返回。
@@ -106,9 +119,9 @@ public class LangChainService implements AIService {
         try {
             List<dev.langchain4j.data.message.ChatMessage> messages = prepareMessages(input, history, recalledMemories);
 
-            streamingChatNative(messages, history, fullResponse, completionFuture);
+            streamingChatNative(messages, history, completionFuture, token);
 
-            // 等待流式响应完成（最多 5 分钟）
+            // 等待流式响应完成（最多 5 分钟，含限流重试的退避时间）
             try {
                 completionFuture.get(5, TimeUnit.MINUTES);
             } catch (java.util.concurrent.TimeoutException e) {
@@ -133,12 +146,13 @@ public class LangChainService implements AIService {
 
     /**
      * 原生 function calling：带 ToolSpecification 发起请求，在 onCompleteResponse 读取结构化工具请求。
+     * 限流/瞬时网络错误由 {@link RetryingStreamHandler} 自动退避重发，收敛失败才走错误路径。
      */
     private void streamingChatNative(
             List<dev.langchain4j.data.message.ChatMessage> messages,
             List<ChatMessage> history,
-            StringBuilder fullResponse,
-            CompletableFuture<Void> completionFuture) {
+            CompletableFuture<Void> completionFuture,
+            com.thoughtcoding.core.CancelToken token) {
 
         dev.langchain4j.model.chat.request.ChatRequest.Builder reqBuilder =
                 dev.langchain4j.model.chat.request.ChatRequest.builder().messages(messages);
@@ -150,76 +164,139 @@ public class LangChainService implements AIService {
         }
         dev.langchain4j.model.chat.request.ChatRequest request = reqBuilder.build();
 
-        streamingChatModel.chat(request, new StreamingChatResponseHandler() {
-            @Override
-            public void onPartialResponse(String token) {
-                if (shouldStop) {
+        streamingChatModel.chat(request, new RetryingStreamHandler(request, history, completionFuture, token));
+    }
+
+    /**
+     * 带限流/瞬时错误自动重试的流式 handler。
+     *
+     * <p>重试语义：onError 时若是可重试错误且未被取消/停止，经 {@code retryScheduler} 退避后
+     * <b>重发同一请求</b>（不占 SDK 回调线程等待）。重试对上层完全透明——
+     * {@code toolCallHandler} 只在 onCompleteResponse 触发，onError 路径不可能已发出工具调用，
+     * 因此重发不会造成 AgentLoop 侧 pendingToolCalls 重复累积。
+     * 失败前已流式上屏的半截文本不回撤（重发内容接在其后），UI 可感知重试发生。
+     *
+     * <p>收敛规则：重试超限、不可重试错误、或重试等待期间被取消/停止，才走失败路径；
+     * 若取消先行（future 已完成），静默返回——不向 history 追加错误消息，保持配对与内容干净。
+     */
+    private final class RetryingStreamHandler implements StreamingChatResponseHandler {
+        private final dev.langchain4j.model.chat.request.ChatRequest request;
+        private final List<ChatMessage> history;
+        private final CompletableFuture<Void> completionFuture;
+        private final com.thoughtcoding.core.CancelToken token;
+        private int attempts = 0;
+
+        RetryingStreamHandler(dev.langchain4j.model.chat.request.ChatRequest request,
+                              List<ChatMessage> history,
+                              CompletableFuture<Void> completionFuture,
+                              com.thoughtcoding.core.CancelToken token) {
+            this.request = request;
+            this.history = history;
+            this.completionFuture = completionFuture;
+            this.token = token;
+        }
+
+        @Override
+        public void onPartialResponse(String part) {
+            if (shouldStop) {
+                return;
+            }
+            if (messageHandler != null) {
+                messageHandler.accept(new ChatMessage("assistant", part));
+            }
+        }
+
+        @Override
+        public void onCompleteResponse(dev.langchain4j.model.chat.response.ChatResponse chatResponse) {
+            try {
+                dev.langchain4j.data.message.AiMessage ai = chatResponse.aiMessage();
+                String text = ai.text();
+                List<dev.langchain4j.agent.tool.ToolExecutionRequest> requests = ai.toolExecutionRequests();
+
+                if (requests != null && !requests.isEmpty()) {
+                    // 携带工具调用的 assistant 消息加入 history（供下一轮重建 AiMessage.toolExecutionRequests）
+                    List<ToolCallRef> refs = new ArrayList<>();
+                    for (dev.langchain4j.agent.tool.ToolExecutionRequest req : requests) {
+                        refs.add(new ToolCallRef(req.id(), req.name(), req.arguments()));
+                    }
+                    history.add(ChatMessage.assistantWithToolCalls(text, refs));
+
+                    // 逐个工具请求发出 ToolCall（带 providerCallId），由 AgentLoop 累积并执行
+                    if (toolCallHandler != null) {
+                        for (dev.langchain4j.agent.tool.ToolExecutionRequest req : requests) {
+                            java.util.Map<String, Object> params = parseArguments(req.arguments());
+                            ToolCall call = new ToolCall(req.name(), params, null, false, 0, false, req.id());
+                            toolCallHandler.accept(call);
+                        }
+                    }
+                } else {
+                    // 纯文本回复
+                    if (text != null && !text.isBlank()) {
+                        history.add(new ChatMessage("assistant", text));
+                    }
+                }
+            } finally {
+                isGenerating = false;
+                shouldStop = false;
+                completionFuture.complete(null);
+            }
+        }
+
+        @Override
+        public void onError(Throwable error) {
+            Long delayMs = nextRetryDelayMs(error, attempts, shouldStop, token);
+            if (delayMs == null || completionFuture.isDone()) {
+                failThrough(error);
+                return;
+            }
+            attempts++;
+            System.err.println("⚠️  API 瞬时错误，" + (delayMs / 1000) + "s 后自动重试（第 "
+                    + attempts + "/" + MAX_STREAM_RETRIES + " 次）: " + error.getMessage());
+            if (messageHandler != null) {
+                // 仅上屏提示，不写 history（history 只在 onComplete/失败路径写入）
+                messageHandler.accept(new ChatMessage("assistant",
+                        "\n⚠️ API 瞬时错误（限流/网络），" + (delayMs / 1000)
+                                + " 秒后自动重试（第 " + attempts + "/" + MAX_STREAM_RETRIES + " 次）...\n\n"));
+            }
+            retryScheduler.schedule(() -> {
+                if (shouldStop || completionFuture.isDone()
+                        || (token != null && token.isCancelled())) {
+                    // 退避期间被取消/停止：future 已由取消路径完成，静默返回
                     return;
                 }
-                fullResponse.append(token);
+                try {
+                    streamingChatModel.chat(request, this);
+                } catch (Exception e) {
+                    failThrough(e);
+                }
+            }, delayMs, TimeUnit.MILLISECONDS);
+        }
+
+        /** 最终失败路径：错误消息进 history + UI，并 exceptional 完成 future。 */
+        private void failThrough(Throwable error) {
+            // 取消先行的场景（future 已完成）：不再污染 history
+            if (completionFuture.isDone()) {
+                return;
+            }
+            try {
+                System.err.println("❌ API error: " + error.getMessage());
+                ChatMessage errorMessage = new ChatMessage("assistant",
+                        "抱歉，我在处理您的请求时遇到了问题： " + error.getMessage());
                 if (messageHandler != null) {
-                    messageHandler.accept(new ChatMessage("assistant", token));
+                    messageHandler.accept(errorMessage);
                 }
+                history.add(errorMessage);
+            } finally {
+                isGenerating = false;
+                shouldStop = false;
+                completionFuture.completeExceptionally(error);
             }
-
-            @Override
-            public void onCompleteResponse(dev.langchain4j.model.chat.response.ChatResponse chatResponse) {
-                try {
-                    dev.langchain4j.data.message.AiMessage ai = chatResponse.aiMessage();
-                    String text = ai.text();
-                    List<dev.langchain4j.agent.tool.ToolExecutionRequest> requests = ai.toolExecutionRequests();
-
-                    if (requests != null && !requests.isEmpty()) {
-                        // 携带工具调用的 assistant 消息加入 history（供下一轮重建 AiMessage.toolExecutionRequests）
-                        List<ToolCallRef> refs = new ArrayList<>();
-                        for (dev.langchain4j.agent.tool.ToolExecutionRequest req : requests) {
-                            refs.add(new ToolCallRef(req.id(), req.name(), req.arguments()));
-                        }
-                        history.add(ChatMessage.assistantWithToolCalls(text, refs));
-
-                        // 逐个工具请求发出 ToolCall（带 providerCallId），由 AgentLoop 累积并执行
-                        if (toolCallHandler != null) {
-                            for (dev.langchain4j.agent.tool.ToolExecutionRequest req : requests) {
-                                java.util.Map<String, Object> params = parseArguments(req.arguments());
-                                ToolCall call = new ToolCall(req.name(), params, null, false, 0, false, req.id());
-                                toolCallHandler.accept(call);
-                            }
-                        }
-                    } else {
-                        // 纯文本回复
-                        if (text != null && !text.isBlank()) {
-                            history.add(new ChatMessage("assistant", text));
-                        }
-                    }
-                } finally {
-                    isGenerating = false;
-                    shouldStop = false;
-                    completionFuture.complete(null);
-                }
-            }
-
-            @Override
-            public void onError(Throwable error) {
-                try {
-                    System.err.println("❌ API error: " + error.getMessage());
-                    ChatMessage errorMessage = new ChatMessage("assistant",
-                            "抱歉，我在处理您的请求时遇到了问题： " + error.getMessage());
-                    if (messageHandler != null) {
-                        messageHandler.accept(errorMessage);
-                    }
-                    history.add(errorMessage);
-                } finally {
-                    isGenerating = false;
-                    shouldStop = false;
-                    completionFuture.completeExceptionally(error);
-                }
-            }
-        });
+        }
     }
 
     /** 把工具调用参数 JSON 解析为 Map；失败则退化为 {"input": 原始串}。 */
     private java.util.Map<String, Object> parseArguments(String argumentsJson) {
-        java.util.Map<String, Object> params = new java.util.HashMap<>();
+        java.util.HashMap<String, Object> params = new java.util.HashMap<>();
         if (argumentsJson == null || argumentsJson.isBlank()) {
             return params;
         }
@@ -230,6 +307,46 @@ public class LangChainService implements AIService {
             params.put("input", argumentsJson);
             return params;
         }
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // 限流/瞬时错误重试（纯函数部分，包可见供单测直接验证判定矩阵）
+    // ────────────────────────────────────────────────────────────────────────
+
+    /**
+     * 判定异常是否值得自动重试：限流、超时、连接与网关类<b>瞬时</b>错误。
+     * 业务性错误（鉴权失败、参数非法、上下文超限）重试必然再失败，不重试。
+     * 消息子串匹配是宽松兜底（如 "429" 可能误中含该数字的 id），但重试有上限且退避后仍失败
+     * 会走原失败路径，误判的代价只是一次延迟，可接受。
+     */
+    static boolean isRetryableError(Throwable error) {
+        if (error == null) {
+            return false;
+        }
+        if (error instanceof dev.langchain4j.exception.RateLimitException) {
+            return true;
+        }
+        String msg = String.valueOf(error.getMessage()).toLowerCase();
+        return msg.contains("rate limit") || msg.contains("ratelimit")
+                || msg.contains("429") || msg.contains("50602")
+                || msg.contains("timeout") || msg.contains("timed out")
+                || msg.contains("connection") || msg.contains("temporarily unavailable")
+                || msg.contains("502") || msg.contains("503") || msg.contains("504");
+    }
+
+    /**
+     * 计算下一次重试的延迟；返回 null 表示不重试（已取消/已停止/超次数/不可重试）。
+     * 纯函数，便于单测覆盖决策矩阵。
+     */
+    static Long nextRetryDelayMs(Throwable error, int attemptsSoFar,
+                                 boolean shouldStop, com.thoughtcoding.core.CancelToken token) {
+        if (shouldStop || (token != null && token.isCancelled())) {
+            return null;
+        }
+        if (attemptsSoFar >= MAX_STREAM_RETRIES || !isRetryableError(error)) {
+            return null;
+        }
+        return STREAM_RETRY_DELAYS_MS[attemptsSoFar];
     }
 
     /**
@@ -287,6 +404,8 @@ public class LangChainService implements AIService {
         if (token != null) {
             token.onCancel(() -> future.cancel(false));
         }
+        // 限流/瞬时错误重试：并行子代理更容易触发 TPM 限流，退避重发同一请求（对调用方透明）
+        final int[] subAttempts = {0};
         streamingChatModel.chat(request, new StreamingChatResponseHandler() {
             @Override
             public void onPartialResponse(String partial) {
@@ -318,7 +437,27 @@ public class LangChainService implements AIService {
 
             @Override
             public void onError(Throwable error) {
-                future.completeExceptionally(error);
+                Long delayMs = nextRetryDelayMs(error, subAttempts[0], false, token);
+                if (delayMs == null || future.isDone()) {
+                    future.completeExceptionally(error);
+                    return;
+                }
+                subAttempts[0]++;
+                System.err.println("⚠️  子Agent请求瞬时错误，" + (delayMs / 1000) + "s 后自动重试（第 "
+                        + subAttempts[0] + "/" + MAX_STREAM_RETRIES + " 次）: " + error.getMessage());
+                if (tokenSink != null) {
+                    try {
+                        tokenSink.accept("\n[子Agent请求被限流/网络抖动，" + (delayMs / 1000)
+                                + " 秒后自动重试...]\n");
+                    } catch (Exception ignored) {
+                    }
+                }
+                retryScheduler.schedule(() -> {
+                    if (future.isDone() || (token != null && token.isCancelled())) {
+                        return; // 退避期间已取消/完成
+                    }
+                    streamingChatModel.chat(request, this);
+                }, delayMs, TimeUnit.MILLISECONDS);
             }
         });
 
