@@ -24,6 +24,18 @@ public class ThoughtCodingCLI {
         int exitCode = 1;
         // Context 是应用级资源边界；无论正常返回、命令异常还是参数解析失败都会关闭。
         try (ThoughtCodingContext context = ThoughtCodingContext.initialize()) {
+            // JVM 级兜底清理：Ctrl+C / kill / 终端关闭时 try-with-resources 不会执行，
+            // shutdown hook 保证 MCP 子进程、bash 子进程、worktree 等资源仍被幂等回收
+            // （close() 内部有 AtomicBoolean 防重入，与正常路径的 close 竞争是安全的）。
+            ThoughtCodingContext hookContext = context;
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                try {
+                    hookContext.close();
+                } catch (Exception ignored) {
+                    // 退出路径尽力清理，不抛
+                }
+            }, "thoughtcoding-shutdown-cleanup"));
+
             CommandLine commandLine = new CommandLine(new ThoughtCodingCommand(context));
             commandLine.addSubcommand("session", new SessionCommand(context));
             commandLine.addSubcommand("config", new ConfigCommand(context));

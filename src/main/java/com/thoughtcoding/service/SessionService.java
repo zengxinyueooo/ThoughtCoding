@@ -103,11 +103,28 @@ public class SessionService {
                     })
                     .collect(Collectors.toList());
 
-            // 保存到文件
-            File jsonFile = getSessionFilePath(sessionId).toFile();
-            objectMapper.writeValue(jsonFile, sessionDTO);
+            // 原子写：先写临时文件再原子 rename，崩溃不会留下半截 JSON
+            // （半截 JSON 会导致该会话永久无法加载，历史全部丢失）
+            try {
+                Path target = getSessionFilePath(sessionId);
+                Path tmp = target.resolveSibling(target.getFileName().toString() + ".tmp");
+                objectMapper.writeValue(tmp.toFile(), sessionDTO);
+                try {
+                    java.nio.file.Files.move(tmp, target,
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                            java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                    java.nio.file.Files.move(tmp, target,
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to save session to disk: " + e.getMessage(), e);
+            }
 
         } catch (Exception e) {
+            if (e instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
             throw new RuntimeException("Failed to save session to disk: " + e.getMessage(), e);
         }
     }
@@ -278,8 +295,28 @@ public class SessionService {
             return null;
         }
 
-        // 简单的实现：返回最后一个会话ID
-        // 实际应该根据时间戳排序，这里先返回最后一个
+        // 按会话文件的修改时间取最新——`-c` 续接的必须是真正最近使用过的会话。
+        // 旧实现「HashSet 后取最后一个」顺序不确定，可能续接到任意一个历史会话。
+        String latest = null;
+        long latestMtime = Long.MIN_VALUE;
+        for (String id : sessions) {
+            try {
+                Path file = getSessionFilePath(id);
+                if (Files.exists(file)) {
+                    long mtime = Files.getLastModifiedTime(file).toMillis();
+                    if (mtime > latestMtime) {
+                        latestMtime = mtime;
+                        latest = id;
+                    }
+                }
+            } catch (Exception ignored) {
+                // 单个文件 stat 失败不阻塞其余比较
+            }
+        }
+        if (latest != null) {
+            return latest;
+        }
+        // 全部 stat 失败的极端降级：保持旧行为
         return sessions.get(sessions.size() - 1);
     }
 
