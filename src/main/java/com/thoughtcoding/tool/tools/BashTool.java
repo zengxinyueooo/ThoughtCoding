@@ -23,6 +23,9 @@ public class BashTool extends BaseTool {
     private static final String SHELL =
             System.getProperty("os.name").toLowerCase().contains("win") ? "PowerShell" : "bash";
 
+    /** stdout 收集上限（字符）：防 `yes` 类命令在超时窗口内撑爆内存。约对应数万 token。 */
+    static final int MAX_OUTPUT_CHARS = 50_000;
+
     public BashTool(AppConfig appConfig) {
         super("bash", "执行任意 " + SHELL + " 命令，返回合并的 stdout/stderr。需要搜索文件内容时也用它（如 grep/rg）。参数：command（必填）、timeout（可选，秒）。");
         Integer t = appConfig.getTools().getBash().getTimeoutSeconds();
@@ -82,6 +85,13 @@ public class BashTool extends BaseTool {
             // 各自在独立 Git worktree 中执行。
             pb.directory(Sandbox.workspaceRoot().toFile());
             pb.redirectErrorStream(true);
+            // 环境变量净化：子进程默认继承全部环境，任意命令都能读到宿主 API key 等敏感值。
+            // 按名称黑名单剔除密钥类变量（PATH/JAVA_HOME 等不受影响）。
+            pb.environment().keySet().removeIf(k -> {
+                String u = k.toUpperCase();
+                return u.contains("API_KEY") || u.contains("TOKEN") || u.contains("SECRET")
+                        || u.contains("PASSWORD") || u.contains("PASSWD") || u.contains("CREDENTIAL");
+            });
 
             Process process = pb.start();
 
@@ -93,14 +103,26 @@ public class BashTool extends BaseTool {
                 });
             }
 
-            // 后台线程消费 stdout，避免主线程因 readLine 阻塞而无法触发超时
+            // 后台线程消费 stdout，避免主线程因 readLine 阻塞而无法触发超时。
+            // 输出封顶：超过 MAX_OUTPUT_CHARS 停止收集（进程继续跑完/超时终止），尾部标注截断。
             StringBuilder output = new StringBuilder();
+            final boolean[] truncated = {false};
             Thread readerThread = new Thread(() -> {
                 try (BufferedReader reader = new BufferedReader(
                         new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
                     String line;
                     while ((line = reader.readLine()) != null) {
-                        output.append(line).append("\n");
+                        if (output.length() >= MAX_OUTPUT_CHARS) {
+                            truncated[0] = true;
+                            continue; // 丢弃后续输出，但继续消费防止管道背压卡死子进程
+                        }
+                        int room = MAX_OUTPUT_CHARS - output.length();
+                        if (line.length() > room) {
+                            output.append(line, 0, room).append('\n');
+                            truncated[0] = true;
+                        } else {
+                            output.append(line).append('\n');
+                        }
                     }
                 } catch (Exception ignored) {
                     // 进程被 destroy 后流关闭，忽略
@@ -124,6 +146,10 @@ public class BashTool extends BaseTool {
 
             int exitCode = process.exitValue();
             String result = output.toString().trim();
+            if (truncated[0]) {
+                result = result + "\n[输出已截断：仅保留前 " + MAX_OUTPUT_CHARS
+                        + " 字符。如需完整输出，请让命令重定向到文件后用 read 分页查看]";
+            }
             if (exitCode != 0) {
                 return error("命令退出码 " + exitCode + ":\n" + result, System.currentTimeMillis() - startTime);
             }
