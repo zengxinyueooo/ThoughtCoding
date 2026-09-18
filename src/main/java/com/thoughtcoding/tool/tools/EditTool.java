@@ -16,11 +16,20 @@ import java.util.Map;
 /**
  * edit 工具：对文件做精确字符串替换。
  * old_string 未找到、或出现多次且未设 replace_all 时报错。
+ * 注入 {@link com.thoughtcoding.tool.FileStateTracker} 后强制「先读后改」并拦截外部修改
+ * （stale read 校验）；tracker 为 null 时跳过校验（测试/降级路径，行为与旧版一致）。
  */
 public class EditTool extends BaseTool {
 
+    private final com.thoughtcoding.tool.FileStateTracker stateTracker;
+
     public EditTool(AppConfig appConfig) {
+        this(appConfig, null);
+    }
+
+    public EditTool(AppConfig appConfig, com.thoughtcoding.tool.FileStateTracker stateTracker) {
         super("edit", "对文件做精确字符串替换。old_string 必须是文件中的原文（不是 Read 工具输出的带行号的格式），将 old_string 替换为 new_string。old_string 必须在文件中唯一，否则需设 replace_all=true。参数：path、old_string、new_string（必填）、replace_all（可选）。");
+        this.stateTracker = stateTracker;
     }
 
     @Override
@@ -60,7 +69,21 @@ public class EditTool extends BaseTool {
 
             Path path = Sandbox.resolve(p.toString());
             if (!Files.exists(path) || Files.isDirectory(path)) {
-                return error("文件不存在: " + p, System.currentTimeMillis() - startTime);
+                return error("文件不存在: " + p + "。不要猜测路径——先用 glob 确认实际文件名再编辑。",
+                        System.currentTimeMillis() - startTime);
+            }
+
+            // stale-read 校验：模型认知与现实的一致性检查
+            if (stateTracker != null) {
+                com.thoughtcoding.tool.FileStateTracker.State st = stateTracker.checkStale(path);
+                if (st == com.thoughtcoding.tool.FileStateTracker.State.NEVER_READ) {
+                    return error("编辑前必须先用 read 读取该文件：防止基于猜测的内容破坏文件。请先 read 再 edit。",
+                            System.currentTimeMillis() - startTime);
+                }
+                if (st == com.thoughtcoding.tool.FileStateTracker.State.STALE) {
+                    return error("文件在上次读取后被外部修改过，当前内容可能与你看到的不同。请重新 read 后再编辑。",
+                            System.currentTimeMillis() - startTime);
+                }
             }
 
             String content = Files.readString(path).replace("\r\n", "\n");
@@ -81,6 +104,9 @@ public class EditTool extends BaseTool {
                 result = content.substring(0, idx) + newString + content.substring(idx + oldString.length());
             }
             Files.writeString(path, result);
+            if (stateTracker != null) {
+                stateTracker.recordRead(path); // 编辑后的内容模型已知，登记新快照
+            }
 
             return success("已在 " + path + " 替换 " + (replaceAll ? count : 1) + " 处",
                     System.currentTimeMillis() - startTime);

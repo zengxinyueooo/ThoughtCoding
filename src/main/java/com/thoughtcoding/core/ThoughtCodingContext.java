@@ -111,20 +111,22 @@ public class ThoughtCodingContext implements AutoCloseable {
         MCPToolManager mcpToolManager = new MCPToolManager(mcpService, mcpConfig);
 
         // 注册内置工具 - 传递整个 AppConfig 对象
+        // 文件状态跟踪器在 read/write/edit 三个工具间共享，支撑「先读后改」与 stale-read 一致性校验
+        com.thoughtcoding.tool.FileStateTracker fileStateTracker = new com.thoughtcoding.tool.FileStateTracker();
         if (appConfig.getTools().getBash().isEnabled()) {
             toolRegistry.register(new BashTool(appConfig));
         }
 
         if (appConfig.getTools().getRead().isEnabled()) {
-            toolRegistry.register(new ReadTool(appConfig));
+            toolRegistry.register(new ReadTool(appConfig, fileStateTracker));
         }
 
         if (appConfig.getTools().getWrite().isEnabled()) {
-            toolRegistry.register(new WriteTool(appConfig));
+            toolRegistry.register(new WriteTool(appConfig, fileStateTracker));
         }
 
         if (appConfig.getTools().getEdit().isEnabled()) {
-            toolRegistry.register(new EditTool(appConfig));
+            toolRegistry.register(new EditTool(appConfig, fileStateTracker));
         }
 
         if (appConfig.getTools().getGlob().isEnabled()) {
