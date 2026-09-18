@@ -260,6 +260,16 @@ public class MCPClient {
         }
     }
 
+    /**
+     * 同一 server 的请求串行锁。
+     *
+     * <p><b>串话修复（最小方案）</b>：{@link #readResponse} 按行读下一条响应、不按请求 id 匹配，
+     * 并发调用同一 server 的两个工具会互相读走对方的响应。在 id 多路复用重构之前，
+     * 先以 per-client 锁保证同一 server 同时只有一个 in-flight 请求——
+     * MCP 调用频率低（工具调用非吞吐敏感），串行的代价可忽略，正确性优先。
+     */
+    private final Object requestLock = new Object();
+
     public Object callTool(String toolName, Map<String, Object> arguments) throws IOException {
         if (!initialized) {
             throw new IllegalStateException("MCP客户端未初始化");
@@ -270,16 +280,18 @@ public class MCPClient {
                 Map.of("name", toolName, "arguments", arguments)
         );
 
-        sendRequest(request);
-        MCPResponse response = readResponse(30000);
+        synchronized (requestLock) {
+            sendRequest(request);
+            MCPResponse response = readResponse(30000);
 
-        if (response != null) {
-            if (response.getError() != null) {
-                throw new IOException("工具调用失败: " + response.getError().getMessage());
-            }
-            if (response.getResult() != null) {
-                Map<String, Object> result = (Map<String, Object>) response.getResult();
-                return result.get("content");
+            if (response != null) {
+                if (response.getError() != null) {
+                    throw new IOException("工具调用失败: " + response.getError().getMessage());
+                }
+                if (response.getResult() != null) {
+                    Map<String, Object> result = (Map<String, Object>) response.getResult();
+                    return result.get("content");
+                }
             }
         }
 

@@ -49,7 +49,9 @@ class ToolExecutionPipelineTest {
         assertEquals(List.of("pre", "tool", "post"), events);
         assertEquals(1, history.size());
         assertEquals("call-1", history.getFirst().getToolCallId());
-        assertEquals("完成", history.getFirst().getContent());
+        // 工具输出统一包 <tool_output>（提示注入缓解），正文保留
+        assertEquals("<tool_output tool=\"echo\">\n完成\n</tool_output>",
+                history.getFirst().getContent());
     }
 
     @Test
@@ -77,7 +79,8 @@ class ToolExecutionPipelineTest {
         assertEquals(0, toolExecutions.get());
         assertEquals(0, postExecutions.get());
         assertEquals(1, history.size());
-        assertEquals("策略拒绝", history.getFirst().getContent());
+        assertTrue(history.getFirst().getContent().contains("策略拒绝"),
+                "阻断原因应保留原文（可包标注）: " + history.getFirst().getContent());
     }
 
     @Test
@@ -99,7 +102,8 @@ class ToolExecutionPipelineTest {
 
         assertFalse(outcome.result().isSuccess());
         assertEquals(1, postExecutions.get());
-        assertEquals("执行失败: 退出码 1", history.getFirst().getContent());
+        assertTrue(history.getFirst().getContent().contains("执行失败: 退出码 1"),
+                "失败原因应保留: " + history.getFirst().getContent());
     }
 
     @Test
@@ -124,7 +128,7 @@ class ToolExecutionPipelineTest {
         assertTrue(second.result().getError().contains("不可重复以相同的入参调用同一个工具"));
         assertEquals(1, executions.get());
         assertEquals(2, history.size());
-        assertEquals("完成", history.getFirst().getContent());
+        assertTrue(history.getFirst().getContent().contains("完成"));
         assertTrue(history.get(1).getContent().contains("不可重复以相同的入参调用同一个工具"));
     }
 

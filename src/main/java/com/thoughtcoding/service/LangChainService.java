@@ -272,20 +272,22 @@ public class LangChainService implements AIService {
             }, delayMs, TimeUnit.MILLISECONDS);
         }
 
-        /** 最终失败路径：错误消息进 history + UI，并 exceptional 完成 future。 */
+        /** 最终失败路径：UI 上屏错误并 exceptional 完成 future，<b>不写入 history</b>。 */
         private void failThrough(Throwable error) {
-            // 取消先行的场景（future 已完成）：不再污染 history
+            // 取消先行的场景（future 已完成）：不再重复报错
             if (completionFuture.isDone()) {
                 return;
             }
             try {
                 System.err.println("❌ API error: " + error.getMessage());
-                ChatMessage errorMessage = new ChatMessage("assistant",
-                        "抱歉，我在处理您的请求时遇到了问题： " + error.getMessage());
+                // 只上屏、不进 history：把错误伪装成 assistant 消息会让模型下轮看到
+                // "自己说过道歉"，可能引发道歉循环；本轮没有挂起的工具调用，无需配对补偿，
+                // 用户重新发消息即可继续（限流重试已在上游消耗过，这里是重试耗尽的终态）。
                 if (messageHandler != null) {
-                    messageHandler.accept(errorMessage);
+                    messageHandler.accept(new ChatMessage("assistant",
+                            "❌ 请求持续失败（已重试 " + MAX_STREAM_RETRIES + " 次）："
+                                    + error.getMessage() + "\n请稍后重新发送消息继续。"));
                 }
-                history.add(errorMessage);
             } finally {
                 isGenerating = false;
                 shouldStop = false;
