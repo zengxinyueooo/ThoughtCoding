@@ -158,7 +158,16 @@ public class ThoughtCodingContext implements AutoCloseable {
                 memoryService = null;
             }
         }
-        ContextManager contextManager = new ContextManager(appConfig, skillRegistry, memoryStore);  // 🔥 创建上下文管理器
+        // 项目指令文件（CLAUDE.md 优先 / AGENTS.md 回退，对齐 Claude Code 语义）：
+        // 启动扫描一次，注入 system prompt；无文件时 content 为空，ContextManager 自动跳过注入段
+        com.thoughtcoding.service.ProjectInstructionsLoader.Loaded projectInstructions =
+                com.thoughtcoding.service.ProjectInstructionsLoader.load(
+                        java.nio.file.Paths.get(System.getProperty("user.dir")));
+        if (!projectInstructions.sources().isEmpty()) {
+            System.out.println("📋 已加载项目指令: " + String.join(", ", projectInstructions.sources()));
+        }
+        ContextManager contextManager = new ContextManager(appConfig, skillRegistry, memoryStore,
+                projectInstructions.content());  // 🔥 创建上下文管理器
         AIService aiService = new LangChainService(appConfig, toolRegistry, contextManager);  // 🔥 注入 contextManager
         SessionService sessionService = new SessionService();
         PerformanceMonitor performanceMonitor = new PerformanceMonitor();
