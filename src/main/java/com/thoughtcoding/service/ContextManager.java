@@ -109,7 +109,8 @@ public class ContextManager {
         this.snipKeepHead = ai.getSnipKeepHead();
         this.snipKeepTail = ai.getSnipKeepTail();
         this.keepRecentToolResults = ai.getKeepRecentToolResults();
-        this.maxToolResultBytes = this.maxContextTokens / 2;
+        this.maxToolResultBytes = ai.getMaxToolResultBytes() > 0
+                ? ai.getMaxToolResultBytes() : this.maxContextTokens / 2;
         this.perResultPersistBytes = ai.getPerResultPersistBytes();
         this.l4KeepTail = ai.getL4KeepTail();
     }
@@ -150,8 +151,22 @@ public class ContextManager {
      * @return 经过处理的历史（不超过限制、工具配对一致）
      */
     public List<ChatMessage> getContextForAI(List<ChatMessage> fullHistory) {
+        return getContextForAI(fullHistory, 0);
+    }
+
+    /**
+     * 按完整请求的固定开销为历史分配剩余预算。
+     *
+     * @param reservedTokens system prompt、工具定义、召回正文和输出上限的估算 token
+     */
+    public List<ChatMessage> getContextForAI(List<ChatMessage> fullHistory, int reservedTokens) {
         if (fullHistory == null || fullHistory.isEmpty()) {
             return new ArrayList<>();
+        }
+        int historyBudget = Math.max(256, maxContextTokens - Math.max(0, reservedTokens));
+        if (reservedTokens >= maxContextTokens) {
+            log.warn("请求固定开销估算 {} tokens 已达到总预算 {}，历史仅保留最小预算 {}",
+                    reservedTokens, maxContextTokens, historyBudget);
         }
 
         // 入口深拷贝一次，后续各层原地改这份副本，天然不碰入参
@@ -161,14 +176,14 @@ public class ContextManager {
         work = snipCompact(work);        // L1：消息数超限裁中段（边界保护）
         work = microCompact(work);       // L2：最近 N 条全文，更旧的占位（跳过 L3 已落盘标记）
 
-        if (estimateTotalTokens(work) > maxContextTokens) {
+        if (estimateTotalTokens(work) > historyBudget) {
             work = compactHistory(work, fullHistory); // L4：LLM 摘要，返回新列表，只读 fullHistory
         }
 
         // 硬截断兜底：L4 熔断（摘要连续失败）或摘要后仍超限时，机械丢弃最旧消息。
         // 宁可丢最旧的上下文，也绝不把超限历史发给模型（必然 400，回合报废）。
-        if (estimateTotalTokens(work) > maxContextTokens) {
-            work = hardTrimToFit(work);
+        if (estimateTotalTokens(work) > historyBudget) {
+            work = hardTrimToFit(work, historyBudget);
         }
 
         // 🔥 保证发给模型的历史工具调用/结果配对一致（防止各层裁剪导致孤立 id → 模型 400）
@@ -187,7 +202,7 @@ public class ContextManager {
      * 截断发生时把<b>截断前的完整列表</b>落盘 transcripts/（与 L4 同一目录），
      * 保证被丢弃的内容可回溯。
      */
-    private List<ChatMessage> hardTrimToFit(List<ChatMessage> work) {
+    private List<ChatMessage> hardTrimToFit(List<ChatMessage> work, int tokenBudget) {
         int n = work.size();
         int keepTail = Math.min(HARD_TRIM_KEEP_TAIL, n);
         int start = 0;
@@ -196,14 +211,10 @@ public class ContextManager {
             start++;
         }
         int end = n - keepTail;
-        if (start >= end) {
-            return work; // 可截断区间为空：只剩 system + 尾部保留区，无法再截
-        }
-
         writeTranscript(work); // 截断前落盘可回溯记录
 
         int guard = 0;
-        while (start < n - keepTail && estimateTotalTokens(work) > maxContextTokens
+        while (start < n - keepTail && estimateTotalTokens(work) > tokenBudget
                 && guard++ < n * 2) {
             ChatMessage head = work.get(start);
             if (head.isToolMessage()) {
@@ -234,9 +245,79 @@ public class ContextManager {
             n = work.size();
         }
 
-        log.info("硬截断兜底完成：估算 {} tokens（预算 {}），剩余 {} 条消息",
-                estimateTotalTokens(work), maxContextTokens, work.size());
+        // 最近 20 条本身也可能超限。继续收缩，但保留最新消息；若尾部是工具结果，
+        // 同时保留发起该批工具调用的 assistant，避免把当前执行结果变成孤立消息。
+        int protectedStart = latestExchangeStart(work);
+        while (protectedStart > 0 && estimateTotalTokens(work) > tokenBudget) {
+            int removable = "system".equals(work.get(0).getRole()) && protectedStart > 1 ? 1 : 0;
+            work.remove(removable);
+            protectedStart = latestExchangeStart(work);
+        }
+        truncateMessageContentToFit(work, tokenBudget);
+
+        log.info("硬截断兜底完成：估算 {} tokens（历史预算 {}），剩余 {} 条消息",
+                estimateTotalTokens(work), tokenBudget, work.size());
         return work;
+    }
+
+    private int latestExchangeStart(List<ChatMessage> work) {
+        if (work.isEmpty()) {
+            return 0;
+        }
+        ChatMessage last = work.get(work.size() - 1);
+        if (!last.isToolMessage() || last.getToolCallId() == null) {
+            return work.size() - 1;
+        }
+        for (int i = work.size() - 2; i >= 0; i--) {
+            ChatMessage candidate = work.get(i);
+            if (candidate.getToolCalls() == null) {
+                continue;
+            }
+            for (com.thoughtcoding.model.ToolCallRef ref : candidate.getToolCalls()) {
+                if (last.getToolCallId().equals(ref.getId())) {
+                    return i;
+                }
+            }
+        }
+        return work.size() - 1;
+    }
+
+    private void truncateMessageContentToFit(List<ChatMessage> work, int tokenBudget) {
+        int guard = work.size() * 2 + 4;
+        while (estimateTotalTokens(work) > tokenBudget && guard-- > 0) {
+            ChatMessage largest = null;
+            for (ChatMessage message : work) {
+                if (message.getContent() != null && message.getContent().length() > 256
+                        && (largest == null || message.getContent().length() > largest.getContent().length())) {
+                    largest = message;
+                }
+            }
+            if (largest == null) {
+                break;
+            }
+            String content = largest.getContent();
+            int otherTokens = estimateTotalTokens(work) - estimateTokens(content);
+            largest.setContent(tailWithinTokenBudget(content, Math.max(1, tokenBudget - otherTokens)));
+        }
+    }
+
+    private static String tailWithinTokenBudget(String content, int tokenBudget) {
+        final String marker = "[Earlier content truncated.]\n";
+        if (estimateTokens(content) <= tokenBudget) {
+            return content;
+        }
+        int low = 0;
+        int high = content.length();
+        while (low < high) {
+            int mid = (low + high + 1) >>> 1;
+            String candidate = marker + content.substring(content.length() - mid);
+            if (estimateTokens(candidate) <= tokenBudget) {
+                low = mid;
+            } else {
+                high = mid - 1;
+            }
+        }
+        return marker + content.substring(content.length() - low);
     }
 
     /** 深拷贝整个历史（各层只动副本，不碰调用方入参）。 */
@@ -815,7 +896,7 @@ public class ContextManager {
     /**
      * 估算文本的 Token 数量：中文 2 字符 ≈ 1 token，英文 4 字符 ≈ 1 token。
      */
-    private int estimateTokens(String text) {
+    static int estimateTokens(String text) {
         if (text == null || text.isEmpty()) {
             return 0;
         }
@@ -832,7 +913,7 @@ public class ContextManager {
         return (chineseChars / 2) + (otherChars / 4);
     }
 
-    private boolean isChinese(char c) {
+    private static boolean isChinese(char c) {
         return c >= 0x4E00 && c <= 0x9FA5;
     }
 

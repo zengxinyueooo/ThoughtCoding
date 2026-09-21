@@ -185,11 +185,27 @@ public class AgentLoop {
         boolean auto = ai == null || ai.isAutoProcessToolResults();
         int iter = 0;
         int stopContinuations = 0;
+        boolean completionNudgePending = false;
 
         while (true) {
             pendingToolCalls.clear();
             // 一轮模型响应（无新用户输入；用户消息与历史已在 history 中）
-            context.getAiService().streamingChat(null, history, modelName, token, recalledMemories);
+            ChatMessage completionNudge = null;
+            if (completionNudgePending) {
+                completionNudge = new ChatMessage("user",
+                        "<system-reminder>验证命令已成功完成。请根据用户要求和现有证据判断任务是否已完成；"
+                                + "若已完成，请直接给出最终总结并停止调用工具。只有存在明确未解决要求时才继续。"
+                                + "测试通过本身不等于需求必然完成。</system-reminder>");
+                history.add(completionNudge);
+                completionNudgePending = false;
+            }
+            try {
+                context.getAiService().streamingChat(null, history, modelName, token, recalledMemories);
+            } finally {
+                if (completionNudge != null) {
+                    history.remove(completionNudge); // 一次性提示，不污染持久会话
+                }
+            }
             // 流式结束：残余半行上屏，再空一行，避免与后续工具确认/结果挤在一起
             context.getUi().flushAssistantStream();
             context.getUi().printAbove("");
@@ -230,6 +246,8 @@ public class AgentLoop {
                     preExecuteSubAgents(batch, token);
 
             boolean cancelled = false;
+            boolean successfulVerification = false;
+            boolean batchFailure = false;
 
             for (int i = 0; i < batch.size(); i++) {
                 ToolCall call = batch.get(i);
@@ -252,8 +270,14 @@ public class AgentLoop {
 
                 toolPipeline.recordResult(call, outcome, history);
                 if (outcome.isBlocked()) {
+                    batchFailure = true;
                     context.getUi().displayError(outcome.result().getError());
                     continue;
+                }
+                if (!outcome.result().isSuccess()) {
+                    batchFailure = true;
+                } else if (isVerificationCommand(call)) {
+                    successfulVerification = true;
                 }
 
                 displayNativeToolResult(call, outcome.result());
@@ -267,6 +291,7 @@ public class AgentLoop {
             if (!auto) {
                 break;      // 不自动回喂结果 → 执行一批后停止
             }
+            completionNudgePending = successfulVerification && !batchFailure;
             if (++iter >= maxIter) {
                 history.add(new ChatMessage("system",
                         "已达到最大工具调用轮次(" + maxIter + ")，停止自动执行。"));
@@ -274,6 +299,21 @@ public class AgentLoop {
                 break;
             }
         }
+    }
+
+    /** 成功后适合提醒模型收尾的常见测试/验证命令；只提示，不强制结束。 */
+    static boolean isVerificationCommand(ToolCall call) {
+        if (call == null || !"bash".equals(call.getToolName()) || call.getParameters() == null) {
+            return false;
+        }
+        Object raw = call.getParameters().get("command");
+        if (raw == null) {
+            return false;
+        }
+        String command = raw.toString().strip().toLowerCase(java.util.Locale.ROOT);
+        return command.matches(".*(^|[;&|]\\s*)(mvn(\\.cmd)?\\s+(-q\\s+)?test|"
+                + "(\\./)?gradlew?\\s+test|npm\\s+(run\\s+)?test|pnpm\\s+test|yarn\\s+test|"
+                + "pytest|python\\s+-m\\s+pytest|cargo\\s+test|go\\s+test|dotnet\\s+test)(\\s|$).*");
     }
 
     /**

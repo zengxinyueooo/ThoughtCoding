@@ -19,7 +19,7 @@ ai:
   maxConcurrentSubagents: 3     # 并行子代理上限（虚拟线程 + Semaphore 限流，防止触发模型 API 限流）
   subagentWorktreeIsolation: true # 每个子代理使用独立 Git worktree；改动保存到本地分支，不自动合并主分支
   # —— 四层上下文压缩管线（顺序：L3落盘 → L1裁中段 → L2旧结果占位 → L4摘要）——
-  maxContextTokens: 48000       # L4：估算 token 超过则 LLM 摘要旧历史（DeepSeek ~64K 窗口留余量）
+  maxContextTokens: 48000       # 完整请求预算；自动扣除 system、工具、记忆和模型最大输出预留
   maxMessages: 50               # L1：消息条数超过则裁中段（保留头尾）
   snipKeepHead: 3               # L1：保留最前 N 条
   snipKeepTail: 20              # L1：保留最近 N 条

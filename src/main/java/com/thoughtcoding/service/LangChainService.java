@@ -117,9 +117,11 @@ public class LangChainService implements AIService {
         }
 
         try {
-            List<dev.langchain4j.data.message.ChatMessage> messages = prepareMessages(input, history, recalledMemories);
+            List<dev.langchain4j.agent.tool.ToolSpecification> specs = currentToolSpecifications();
+            List<dev.langchain4j.data.message.ChatMessage> messages =
+                    prepareMessages(input, history, recalledMemories, specs);
 
-            streamingChatNative(messages, history, completionFuture, token);
+            streamingChatNative(messages, specs, history, completionFuture, token);
 
             // 等待流式响应完成（最多 5 分钟，含限流重试的退避时间）
             try {
@@ -150,17 +152,15 @@ public class LangChainService implements AIService {
      */
     private void streamingChatNative(
             List<dev.langchain4j.data.message.ChatMessage> messages,
+            List<dev.langchain4j.agent.tool.ToolSpecification> specs,
             List<ChatMessage> history,
             CompletableFuture<Void> completionFuture,
             com.thoughtcoding.core.CancelToken token) {
 
         dev.langchain4j.model.chat.request.ChatRequest.Builder reqBuilder =
                 dev.langchain4j.model.chat.request.ChatRequest.builder().messages(messages);
-        if (toolRegistry != null) {
-            List<dev.langchain4j.agent.tool.ToolSpecification> specs = toolRegistry.getToolSpecifications();
-            if (specs != null && !specs.isEmpty()) {
-                reqBuilder.toolSpecifications(specs);
-            }
+        if (specs != null && !specs.isEmpty()) {
+            reqBuilder.toolSpecifications(specs);
         }
         dev.langchain4j.model.chat.request.ChatRequest request = reqBuilder.build();
 
@@ -479,19 +479,25 @@ public class LangChainService implements AIService {
     }
 
     private List<dev.langchain4j.data.message.ChatMessage> prepareMessages(
-            String input, List<ChatMessage> history, String recalledMemories) {
+            String input, List<ChatMessage> history, String recalledMemories,
+            List<dev.langchain4j.agent.tool.ToolSpecification> specs) {
         List<dev.langchain4j.data.message.ChatMessage> messages = new ArrayList<>();
+        String systemText = null;
 
         if (contextManager != null) {
             ChatMessage projectContext = contextManager.buildProjectContextMessage();
             if (projectContext != null) {
-                messages.add(dev.langchain4j.data.message.SystemMessage.from(projectContext.getContent()));
+                systemText = projectContext.getContent();
+                messages.add(dev.langchain4j.data.message.SystemMessage.from(systemText));
             }
         }
 
+        String recallReminder = ContextManager.buildRecallReminder(recalledMemories);
+        int reservedTokens = estimateFixedRequestTokens(systemText, recallReminder, specs);
+
         List<ChatMessage> managedHistory = history;
         if (contextManager != null && history != null && !history.isEmpty()) {
-            managedHistory = contextManager.getContextForAI(history);
+            managedHistory = contextManager.getContextForAI(history, reservedTokens);
         }
 
         if (managedHistory != null && !managedHistory.isEmpty()) {
@@ -502,13 +508,39 @@ public class LangChainService implements AIService {
         // 而非塞进 system 前缀——保护「system + 历史」前缀缓存不被每轮召回冲掉（仿 Claude Code 把易变上下文贴当前用户轮）。
         // 尾部是唯一能让整段历史保持可复用前缀的位置；每请求即时注入、不写入持久 history，故不污染后续轮。
         // 正文经方法参数请求局部传递（AgentLoop → streamingChat → prepareMessages），不读共享可变状态。
-        String recallReminder = ContextManager.buildRecallReminder(recalledMemories);
         if (recallReminder != null) {
             messages.add(dev.langchain4j.data.message.UserMessage.from(recallReminder));
         }
 
         // 纯从 history 渲染：用户消息已由 AgentLoop 加入 history；input=null 时供 agentic 循环复用
         return messages;
+    }
+
+    private List<dev.langchain4j.agent.tool.ToolSpecification> currentToolSpecifications() {
+        if (toolRegistry == null) {
+            return java.util.Collections.emptyList();
+        }
+        List<dev.langchain4j.agent.tool.ToolSpecification> specs = toolRegistry.getToolSpecifications();
+        return specs == null ? java.util.Collections.emptyList() : specs;
+    }
+
+    /** 固定请求开销：system、召回、工具 schema，以及模型最大输出预留。 */
+    int estimateFixedRequestTokens(String systemText, String recallReminder,
+            List<dev.langchain4j.agent.tool.ToolSpecification> specs) {
+        int tokens = ContextManager.estimateTokens(systemText)
+                + ContextManager.estimateTokens(recallReminder);
+        if (specs != null) {
+            for (dev.langchain4j.agent.tool.ToolSpecification spec : specs) {
+                tokens += ContextManager.estimateTokens(spec.name())
+                        + ContextManager.estimateTokens(spec.description())
+                        + ContextManager.estimateTokens(String.valueOf(spec.parameters()));
+            }
+        }
+        AppConfig.ModelConfig modelConfig = appConfig.getModelConfig(appConfig.getDefaultModel());
+        if (modelConfig != null && modelConfig.getMaxTokens() != null) {
+            tokens += Math.max(0, modelConfig.getMaxTokens());
+        }
+        return tokens;
     }
 
     private List<dev.langchain4j.data.message.ChatMessage> convertToLangChainHistory(

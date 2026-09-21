@@ -313,7 +313,7 @@ public class AppConfig {
 
         // ── 四层上下文压缩管线参数（见 ContextManager）——全部有默认值，旧 config 不填也能跑 ──
         @JsonProperty("maxContextTokens")
-        private int maxContextTokens = 48000; // L4：估算 token 超过则触发 LLM 摘要（DeepSeek ~64K 窗口留余量）
+        private int maxContextTokens = 48000; // 完整请求预算：扣除 system/工具/记忆/输出预留后，余量供历史使用
 
         @JsonProperty("maxMessages")
         private int maxMessages = 50; // L1：消息条数超过则裁中段（保留头尾）
