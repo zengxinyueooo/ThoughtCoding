@@ -34,9 +34,10 @@ ai:
 memory:
   enabled: true                 # 总开关：加载 .memory/ + 索引注入 + 召回/储存/整理
   autoExtract: true             # 每轮对话结束后自动抽取新记忆（需一次模型往返，可关）
-  consolidateThreshold: 10      # 记忆文件数达到此值触发 LLM 整合去重（0=禁用）
+  consolidateThreshold: 10      # 记忆文件数超过此值触发整合，目标压缩到约一半（0=禁用）
   maxIndexEntries: 200          # MEMORY.md 索引条数上限（超限裁掉最早写入的）
   maxPerTurnInjections: 5       # 单轮自动注入的相关记忆条数上限
+  maxInjectionChars: 12000      # 单轮注入记忆正文字符上限，防止挤占主对话上下文
 
 tools:
   bash:

@@ -1,15 +1,16 @@
 package com.thoughtcoding.memory;
 
-import com.thoughtcoding.util.FileUtils;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -71,7 +72,7 @@ public final class MemoryStore {
                 List<Path> files = stream.filter(Files::isRegularFile).sorted().toList();
                 for (Path file : files) {
                     String filename = file.getFileName().toString();
-                    if (INDEX_FILE.equals(filename)) {
+                    if (INDEX_FILE.equals(filename) || !filename.toLowerCase(Locale.ROOT).endsWith(".md")) {
                         continue;
                     }
                     try {
@@ -141,22 +142,18 @@ public final class MemoryStore {
      * 写入一条记忆。slugify name 得文件名（{@code <slug>.md}），frontmatter 与正文一起落盘，
      * 更新内存 map 并重建索引。失败返回 null（调用方静默忽略），不抛。
      */
-    public Path write(String name, String type, String description, String body) {
+    public synchronized Path write(String name, String type, String description, String body) {
         try {
-            String slug = name.toLowerCase().replaceAll("[^a-z0-9]+", "-").replaceAll("(^-|-$)", "");
-            if (slug.isBlank()) {
-                slug = "memory-" + System.nanoTime();
-            }
+            String slug = slugify(name);
             String filename = slug + ".md";
+            int suffix = 2;
+            while (memories.containsKey(filename) && !name.equals(memories.get(filename).name())) {
+                filename = slug + "-" + suffix++ + ".md";
+            }
             String typeVal = (type != null && MEMORY_TYPES.contains(type)) ? type : "user";
-            String content = "---\n"
-                    + "name: " + name + "\n"
-                    + "description: " + (description == null ? "" : description) + "\n"
-                    + "type: " + typeVal + "\n"
-                    + "---\n\n"
-                    + (body == null ? "" : body.strip()) + "\n";
+            String content = serialize(name, typeVal, description, body);
             Path target = dir.resolve(filename);
-            FileUtils.writeFile(target, content);
+            writeAtomically(target, content);
             memories.put(filename, new Memory(filename, name, description == null ? "" : description, typeVal, body == null ? "" : body.strip()));
             rebuildIndexFile();
             return target;
@@ -173,9 +170,9 @@ public final class MemoryStore {
      * 修复了旧实现「写完再全删」会连带删掉新文件（尤其是 dream 新增了旧记忆没有的名字时）的 bug。
      * 任一写失败则返回、不进入删除，保留既有记忆不丢。
      */
-    public void replaceAll(List<Memory> newMemories) {
+    public synchronized boolean replaceAll(List<Memory> newMemories) {
         if (newMemories == null) {
-            return;
+            return false;
         }
         // 1. 先在内存里算好全部目标文件（filename → 内容）与目标集合，避免边写边决定
         Map<String, String> contents = new LinkedHashMap<>();
@@ -184,18 +181,18 @@ public final class MemoryStore {
             if (m == null || m.name() == null || m.name().isBlank()) {
                 continue;
             }
-            String slug = m.name().toLowerCase().replaceAll("[^a-z0-9]+", "-").replaceAll("(^-|-$)", "");
-            if (slug.isBlank()) {
-                slug = "memory-" + System.nanoTime();
-            }
+            String slug = slugify(m.name());
             String filename = slug + ".md";
+            int suffix = 2;
+            while (next.containsKey(filename)) {
+                filename = slug + "-" + suffix++ + ".md";
+            }
             String typeVal = (m.type() != null && MEMORY_TYPES.contains(m.type())) ? m.type() : "user";
-            contents.put(filename, "---\n"
-                    + "name: " + m.name() + "\n"
-                    + "description: " + (m.description() == null ? "" : m.description()) + "\n"
-                    + "type: " + typeVal + "\n"
-                    + "---\n\n"
-                    + (m.body() == null ? "" : m.body().strip()) + "\n");
+            try {
+                contents.put(filename, serialize(m.name(), typeVal, m.description(), m.body()));
+            } catch (IOException e) {
+                return false;
+            }
             next.put(filename, new Memory(filename, m.name(), m.description() == null ? "" : m.description(),
                     typeVal, m.body() == null ? "" : m.body().strip()));
         }
@@ -203,9 +200,9 @@ public final class MemoryStore {
         // 2. 先写全部新文件（覆盖同名、创建新名）；任一失败 → 不进入删除，保留旧记忆
         for (Map.Entry<String, String> e : contents.entrySet()) {
             try {
-                FileUtils.writeFile(dir.resolve(e.getKey()), e.getValue());
+                writeAtomically(dir.resolve(e.getKey()), e.getValue());
             } catch (Exception ex) {
-                return;
+                return false;
             }
         }
 
@@ -214,7 +211,9 @@ public final class MemoryStore {
             try (var stream = Files.list(dir)) {
                 for (Path file : (Iterable<Path>) stream.filter(Files::isRegularFile).toList()) {
                     String filename = file.getFileName().toString();
-                    if (!INDEX_FILE.equals(filename) && !next.containsKey(filename)) {
+                    if (!INDEX_FILE.equals(filename)
+                            && filename.toLowerCase(Locale.ROOT).endsWith(".md")
+                            && !next.containsKey(filename)) {
                         Files.deleteIfExists(file);
                     }
                 }
@@ -227,52 +226,92 @@ public final class MemoryStore {
         memories.clear();
         memories.putAll(next);
         rebuildIndexFile();
+        return true;
+    }
+
+    private static String serialize(String name, String type, String description, String body) throws IOException {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("name", name);
+        metadata.put("description", description == null ? "" : description);
+        metadata.put("type", type);
+        String yaml = YAML_MAPPER.writeValueAsString(metadata).stripTrailing();
+        if (yaml.startsWith("---")) {
+            yaml = yaml.substring(3).stripLeading();
+        }
+        return "---\n" + yaml + "\n---\n\n" + (body == null ? "" : body.strip()) + "\n";
+    }
+
+    /** 单文件先写同目录临时文件再替换，进程中断时不会留下半截 Markdown。 */
+    private static void writeAtomically(Path target, String content) throws IOException {
+        Files.createDirectories(target.getParent());
+        Path temp = Files.createTempFile(target.getParent(), target.getFileName().toString(), ".tmp");
+        try {
+            Files.writeString(temp, content);
+            try {
+                Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temp);
+        }
     }
 
     /** 重建 MEMORY.md 索引（受 maxIndexEntries 上限，超限裁掉最早写入的）。 */
-    public void rebuildIndexFile() {
+    public synchronized void rebuildIndexFile() {
         try {
             List<String> lines = new ArrayList<>();
             for (Memory m : memories.values()) {
                 if (lines.size() >= maxIndexEntries) {
                     break;
                 }
-                lines.add("- [" + m.name() + "](" + m.filename() + ") — " + m.description());
+                lines.add("- [" + oneLine(m.name()) + "](" + m.filename() + ") — " + oneLine(m.description()));
             }
-            FileUtils.writeFile(dir.resolve(INDEX_FILE), String.join("\n", lines) + (lines.isEmpty() ? "" : "\n"));
+            writeAtomically(dir.resolve(INDEX_FILE), String.join("\n", lines) + (lines.isEmpty() ? "" : "\n"));
         } catch (Exception ignored) {
             // 索引重建失败不抛
         }
     }
 
     /** 索引文本（供 system prompt 注入），受 maxIndexEntries 上限。 */
-    public String index() {
+    public synchronized String index() {
         StringBuilder sb = new StringBuilder();
         int count = 0;
         for (Memory m : memories.values()) {
             if (count >= maxIndexEntries) {
                 break;
             }
-            sb.append("- [").append(m.name()).append("](").append(m.filename())
-                    .append(") — ").append(m.description()).append('\n');
+            sb.append("- [").append(oneLine(m.name())).append("](").append(m.filename())
+                    .append(") — ").append(oneLine(m.description())).append('\n');
             count++;
         }
         return sb.toString().stripTrailing();
     }
 
-    public List<Memory> list() {
+    private static String oneLine(String value) {
+        return value == null ? "" : value.replaceAll("[\\r\\n]+", " ").strip();
+    }
+
+    private static String slugify(String name) {
+        String slug = name.toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", "-")
+                .replaceAll("(^-|-$)", "");
+        return slug.isBlank() ? "memory-" + Integer.toUnsignedString(name.hashCode(), 36) : slug;
+    }
+
+    public synchronized List<Memory> list() {
         return List.copyOf(memories.values());
     }
 
-    public Memory get(String filename) {
+    public synchronized Memory get(String filename) {
         return memories.get(filename);
     }
 
-    public int size() {
+    public synchronized int size() {
         return memories.size();
     }
 
-    public boolean isEmpty() {
+    public synchronized boolean isEmpty() {
         return memories.isEmpty();
     }
 }

@@ -36,12 +36,15 @@ public class MemoryService {
     private static final Logger log = LoggerFactory.getLogger(MemoryService.class);
 
     private static final Pattern JSON_ARRAY = Pattern.compile("\\[.*\\]", Pattern.DOTALL);
+    private static final Pattern WORD = Pattern.compile("[\\p{L}\\p{N}_-]+");
+    private static final Pattern HAN_SEQUENCE = Pattern.compile("[\\p{IsHan}]+");
+    private static final int DREAM_INPUT_CHARS = 14_000;
 
     private final MemoryStore store;
     private final boolean autoExtract;
     private final int consolidateThreshold;
-    private final int maxIndexEntries;
     private final int maxPerTurnInjections;
+    private final int maxInjectionChars;
     private final OpenAiChatModel model; // 独立同步模型（null = 模型不可用 → 记忆功能静默降级）
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -49,8 +52,8 @@ public class MemoryService {
         this.store = store;
         this.autoExtract = config != null && config.isAutoExtract();
         this.consolidateThreshold = config != null ? config.getConsolidateThreshold() : 10;
-        this.maxIndexEntries = config != null ? config.getMaxIndexEntries() : 200;
         this.maxPerTurnInjections = config != null ? config.getMaxPerTurnInjections() : 5;
+        this.maxInjectionChars = config != null ? config.getMaxInjectionChars() : 12_000;
         this.model = buildModel(appConfig);
     }
 
@@ -85,7 +88,7 @@ public class MemoryService {
      * 空库直接返回空串（省一次无谓的模型往返）。任何失败退化为关键词匹配。
      */
     public String recall(List<ChatMessage> history) {
-        if (store == null || store.isEmpty() || model == null) {
+        if (store == null || store.isEmpty()) {
             return "";
         }
         String recent = recentUserText(history, 2000);
@@ -101,10 +104,12 @@ public class MemoryService {
                 + "记忆目录:\n" + catalog;
 
         List<Integer> selected = null;
-        try {
-            selected = parseIndexArray(callLlm(prompt));
-        } catch (Exception ignored) {
-            selected = null;
+        if (model != null) {
+            try {
+                selected = parseIndexArray(callLlm(prompt));
+            } catch (Exception ignored) {
+                selected = null;
+            }
         }
 
         // 失败退化为关键词匹配（对 name+description）
@@ -117,15 +122,27 @@ public class MemoryService {
         }
         StringBuilder sb = new StringBuilder("<relevant_memories>\n");
         int count = 0;
+        int chars = 0;
+        List<MemoryStore.Memory> memories = store.list();
         for (int idx : selected) {
             if (count >= maxPerTurnInjections) {
                 break;
             }
-            List<MemoryStore.Memory> list = store.list();
-            if (idx < 0 || idx >= list.size()) {
+            if (idx < 0 || idx >= memories.size()) {
                 continue;
             }
-            sb.append(list.get(idx).body()).append("\n\n");
+            String body = memories.get(idx).body();
+            int room = Math.max(0, maxInjectionChars - chars);
+            if (room == 0) {
+                break;
+            }
+            if (body.length() > room) {
+                sb.append(body, 0, room).append("\n[记忆正文已按上下文预算截断]\n\n");
+                chars += room;
+            } else {
+                sb.append(body).append("\n\n");
+                chars += body.length();
+            }
             count++;
         }
         sb.append("</relevant_memories>");
@@ -144,9 +161,19 @@ public class MemoryService {
 
     private List<Integer> keywordFallback(String recent) {
         Set<String> keywords = new LinkedHashSet<>();
-        for (String w : recent.toLowerCase().split("\\s+")) {
-            if (w.length() > 3) {
-                keywords.add(w);
+        String normalized = recent.toLowerCase();
+        Matcher words = WORD.matcher(normalized);
+        while (words.find()) {
+            String word = words.group();
+            if (word.length() > 3) {
+                keywords.add(word);
+            }
+        }
+        Matcher hanSequences = HAN_SEQUENCE.matcher(normalized);
+        while (hanSequences.find()) {
+            String sequence = hanSequences.group();
+            for (int i = 0; i + 2 <= sequence.length(); i++) {
+                keywords.add(sequence.substring(i, i + 2));
             }
         }
         List<Integer> selected = new ArrayList<>();
@@ -216,8 +243,9 @@ public class MemoryService {
                     continue;
                 }
                 String typeStr = type == null ? "user" : type.toString().trim();
-                store.write(name.toString().trim(), typeStr, descStr, bodyStr);
-                written++;
+                if (store.write(name.toString().trim(), typeStr, descStr, bodyStr) != null) {
+                    written++;
+                }
             }
             if (written > 0) {
                 System.out.println("\n[33m[Memory: extracted " + written + " new memories][0m");
@@ -232,27 +260,34 @@ public class MemoryService {
     // ────────────────────────────────────────────────────────────────────────
 
     /**
-     * 记忆文件数达到阈值时，让 LLM 合并重复、清理过时、保留用户偏好，然后整体替换。
-     * <b>目标上限就是 {@code consolidateThreshold}</b>（配置的触发阈值兼作 dream 压缩到的条数上限，
-     * 会写进 prompt 告诉 LLM）。任何失败都静默，保留原记忆不丢。
+     * 记忆文件数超过阈值时，让 LLM 合并重复、清理过时、保留用户偏好。
+     * 单批输入受字符预算限制，没交给模型的条目原样保留；目标压缩到阈值的一半左右。
+     * 任何失败都静默，保留原记忆不丢。
      */
     public void dream() {
         if (store == null || model == null || store.isEmpty()) {
             return;
         }
-        if (consolidateThreshold <= 0 || store.size() < consolidateThreshold) {
+        if (consolidateThreshold <= 0 || store.size() <= consolidateThreshold) {
             return;
         }
 
+        List<MemoryStore.Memory> selectedForDream = new ArrayList<>();
+        List<MemoryStore.Memory> untouched = new ArrayList<>();
         StringBuilder catalog = new StringBuilder();
         for (MemoryStore.Memory m : store.list()) {
-            catalog.append("## ").append(m.filename()).append('\n');
-            catalog.append("name: ").append(m.name()).append('\n');
-            catalog.append("description: ").append(m.description()).append('\n');
-            catalog.append(m.body()).append("\n\n");
+            String rendered = renderForDream(m);
+            if (catalog.length() + rendered.length() <= DREAM_INPUT_CHARS) {
+                catalog.append(rendered);
+                selectedForDream.add(m);
+            } else {
+                untouched.add(m);
+            }
         }
-        // 目标条数 = consolidateThreshold（配置的触发阈值兼作 dream 的目标上限）
-        int targetCount = Math.max(1, consolidateThreshold);
+        if (selectedForDream.size() < 2) {
+            return;
+        }
+        int targetCount = Math.min(selectedForDream.size(), Math.max(1, consolidateThreshold / 2));
         String prompt = "整合下面这些记忆文件:\n"
                 + "1. 重复的合并为一条\n"
                 + "2. 删除过时/被推翻的记忆\n"
@@ -260,11 +295,6 @@ public class MemoryService {
                 + "4. 用户偏好（type=user）优先保留\n"
                 + "返回一个 JSON 数组，每项 {name, type, description, body}。\n\n"
                 + catalog;
-        // 记忆目录很长时截断，避免超模型输出上限；截断只影响本次整合质量，不丢记忆
-        if (prompt.length() > 16000) {
-            prompt = prompt.substring(0, 16000) + "\n...(已截断)";
-        }
-
         try {
             String text = callLlm(prompt);
             List<Object> items = extractJsonArray(text);
@@ -294,8 +324,11 @@ public class MemoryService {
             if (next.isEmpty()) {
                 return;
             }
+            next.addAll(untouched);
             int before = store.size();
-            store.replaceAll(next);
+            if (!store.replaceAll(next)) {
+                return;
+            }
             System.out.println("\n[33m[Memory: consolidated " + before + " → " + next.size() + " memories][0m");
         } catch (Exception e) {
             log.warn("记忆整合失败（保留原记忆，不影响对话）: {}", e.getMessage());
@@ -317,7 +350,7 @@ public class MemoryService {
         return sb.toString();
     }
 
-    private String recentUserText(List<ChatMessage> history, int maxChars) {
+    static String recentUserText(List<ChatMessage> history, int maxChars) {
         if (history == null) {
             return "";
         }
@@ -339,10 +372,10 @@ public class MemoryService {
             sb.append(texts.get(i));
         }
         String joined = sb.toString();
-        return joined.length() <= maxChars ? joined : joined.substring(0, maxChars);
+        return keepTail(joined, maxChars);
     }
 
-    private String recentDialogue(List<ChatMessage> history, int maxChars) {
+    static String recentDialogue(List<ChatMessage> history, int maxChars) {
         if (history == null) {
             return "";
         }
@@ -363,7 +396,18 @@ public class MemoryService {
             lines.add(msg.getRole() + ": " + c);
         }
         String joined = String.join("\n", lines);
-        return joined.length() <= maxChars ? joined : joined.substring(0, maxChars);
+        return keepTail(joined, maxChars);
+    }
+
+    private static String keepTail(String text, int maxChars) {
+        return text.length() <= maxChars ? text : text.substring(text.length() - maxChars);
+    }
+
+    private static String renderForDream(MemoryStore.Memory m) {
+        return "## " + m.filename() + '\n'
+                + "name: " + m.name() + '\n'
+                + "description: " + m.description() + '\n'
+                + m.body() + "\n\n";
     }
 
     /** 同步 LLM 调用，失败返回 null（调用方各自降级）。 */

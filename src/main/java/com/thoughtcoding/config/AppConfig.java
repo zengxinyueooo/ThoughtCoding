@@ -454,6 +454,9 @@ public class AppConfig {
         @JsonProperty("maxPerTurnInjections")
         private int maxPerTurnInjections = 5; // 单轮自动注入的相关记忆条数上限
 
+        @JsonProperty("maxInjectionChars")
+        private int maxInjectionChars = 12000; // 单轮相关记忆正文的字符预算，避免挤占主对话上下文
+
         public boolean isEnabled() {
             return enabled;
         }
@@ -492,6 +495,14 @@ public class AppConfig {
 
         public void setMaxPerTurnInjections(int maxPerTurnInjections) {
             this.maxPerTurnInjections = maxPerTurnInjections;
+        }
+
+        public int getMaxInjectionChars() {
+            return maxInjectionChars;
+        }
+
+        public void setMaxInjectionChars(int maxInjectionChars) {
+            this.maxInjectionChars = maxInjectionChars;
         }
     }
 }
