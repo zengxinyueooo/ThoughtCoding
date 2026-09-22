@@ -303,6 +303,34 @@ public final class MemoryStore {
         return List.copyOf(memories.values());
     }
 
+    /**
+     * 按文件名或 name 删除一条记忆（用户显式「忘记」/ {@code /memory delete} 用）。
+     * 先精确匹配 filename，再匹配 name；删除后重建索引。失败返回 false，不抛。
+     */
+    public synchronized boolean delete(String nameOrFilename) {
+        if (nameOrFilename == null || nameOrFilename.isBlank()) {
+            return false;
+        }
+        String target = nameOrFilename.trim();
+        String filename = target.endsWith(".md") && memories.containsKey(target)
+                ? target
+                : memories.entrySet().stream()
+                        .filter(e -> target.equals(e.getValue().name()))
+                        .map(Map.Entry::getKey)
+                        .findFirst().orElse(null);
+        if (filename == null) {
+            return false;
+        }
+        try {
+            Files.deleteIfExists(dir.resolve(filename));
+            memories.remove(filename);
+            rebuildIndexFile();
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     public synchronized Memory get(String filename) {
         return memories.get(filename);
     }

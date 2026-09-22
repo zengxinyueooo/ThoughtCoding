@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -81,5 +82,24 @@ class MemoryStoreTest {
         assertEquals(2, reloaded.size());
         assertEquals(Set.of("first", "second"),
                 reloaded.list().stream().map(MemoryStore.Memory::body).collect(java.util.stream.Collectors.toSet()));
+    }
+
+    @Test
+    void deleteByNameAndByFilenameRemovesEntryAndRebuildsIndex() {
+        MemoryStore store = MemoryStore.load(tempDir, 20);
+        store.write("user-preference", "user", "pref summary", "pref body");
+        store.write("project-fact", "project", "fact summary", "fact body");
+        assertTrue(store.index().contains("user-preference"));
+
+        assertTrue(store.delete("user-preference"));           // 按 name 删
+        assertTrue(store.delete("project-fact.md"));           // 按文件名删
+        assertFalse(store.delete("nonexistent"));
+        assertTrue(store.isEmpty());
+        assertTrue(store.index().isEmpty());
+        assertTrue(Files.notExists(tempDir.resolve("user-preference.md")));
+
+        // 删除要真正落盘：重载后不应复活
+        MemoryStore reloaded = MemoryStore.load(tempDir, 20);
+        assertTrue(reloaded.isEmpty());
     }
 }

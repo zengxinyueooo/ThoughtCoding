@@ -30,6 +30,33 @@ public class AgentLoop {
     /** 防止 STOP Hook 持续要求续跑导致无界循环。 */
     static final int MAX_STOP_CONTINUATIONS = 3;
 
+    /**
+     * 用户显式记忆诉求词（remember 的第二道门）：即使主模型漏发信号标记，
+     * 用户明确说「记住/忘记」的轮次也不应错过抽取。误匹配的代价只是一次多余的抽取调用。
+     */
+    static final java.util.regex.Pattern EXPLICIT_MEMORY_REQUEST = java.util.regex.Pattern.compile(
+            "记住|记下|别忘记|不要忘记|别忘了|忘记|以后(?:要|都|总是|每次|别)|每次都|不要再|please remember|remember\\b|memorize\\b|don'?t forget|from now on",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /**
+     * 移除历史中 assistant 消息的记忆信号标记（<memory-signal/>），返回是否存在过标记。
+     * 必须在 remember 抽取前移除：标记是给系统的信号，不应进入抽取 prompt、持久会话或后续轮上下文。
+     */
+    static boolean stripMemorySignal(List<ChatMessage> history) {
+        boolean found = false;
+        for (ChatMessage m : history) {
+            if (m == null || m.getContent() == null) {
+                continue;
+            }
+            if (m.getContent().contains(MemoryService.MEMORY_SIGNAL)) {
+                m.setContent(m.getContent().replace(MemoryService.MEMORY_SIGNAL, "")
+                        .replaceAll("(?m)\\s+\\z", "").stripTrailing());
+                found = true;
+            }
+        }
+        return found;
+    }
+
     private final ThoughtCodingContext context;
     private final List<ChatMessage> history;
     private final String sessionId;
@@ -121,7 +148,8 @@ public class AgentLoop {
             // 后台子代理结论注入：在用户新输入之前插入，让模型先看到已完成任务的结论
             injectCompletedBackgroundTasks();
 
-            history.add(new ChatMessage("user", promptContext.buildPromptForModel()));
+            String modelPrompt = promptContext.buildPromptForModel();
+            history.add(new ChatMessage("user", modelPrompt));
 
             // ── 记忆：本轮开始前 LLM 召回相关记忆；正文沿调用链请求局部传递（同 CancelToken 模式），
             // 不落 ContextManager 共享字段，避免并行/后台回合互相串写 ──
@@ -131,13 +159,17 @@ public class AgentLoop {
             // 原生 function calling：多轮 agentic 循环
             runNativeToolLoop(token, recalledMemories);
 
-            // ── 记忆：本轮结束后同步储存新记忆 + 触发条件时整理(dream) ──
+            // ── 记忆：按信号门控储存（省掉每轮空转的抽取调用），整理(dream)后台异步 ──
+            // 触发条件二选一：主模型在本轮输出过 <memory-signal/> 标记，或用户输入含明确的记忆诉求词。
             // 被取消（stop）的回合不写记忆：半截对话不构成可靠记忆，dream 的整理阈值计数也不应前移。
             // 计划模式回合同样不写：只读研究阶段产生的是过程性信息，不是沉淀下来的事实。
             if (memory != null && !token.isCancelled()
                     && !com.thoughtcoding.security.PlanMode.isActive()) {
-                memory.remember(history);
-                memory.dream();
+                boolean signaled = stripMemorySignal(history);
+                if (signaled || EXPLICIT_MEMORY_REQUEST.matcher(modelPrompt).find()) {
+                    memory.remember(history);
+                    memory.dreamAsync(false, msg -> context.getUi().displayInfo(msg));
+                }
             }
 
             context.getSessionService().saveSession(sessionId, history);

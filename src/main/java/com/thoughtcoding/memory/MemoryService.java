@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -25,7 +26,7 @@ import java.util.regex.Pattern;
  * <ul>
  *   <li>{@link #recall}：取最近对话，让 LLM 从记忆索引里挑相关条目，把完整正文注入本轮 system prompt。</li>
  *   <li>{@link #remember}：每轮结束，让 LLM 从对话里抽取新记忆（对现有记忆去重后落盘）。</li>
- *   <li>{@link #dream}：记忆文件数达到阈值时，让 LLM 整合/合并/清理全部记忆。</li>
+ *   <li>{@link #dreamAsync}：记忆文件数达到阈值时在后台线程让 LLM 整合/合并/清理全部记忆。</li>
  * </ul>
  *
  * <p>使用<b>独立的同步模型实例</b>（仿 {@code ContextManager} 的 L4 摘要模型），不触碰
@@ -40,18 +41,29 @@ public class MemoryService {
     private static final Pattern HAN_SEQUENCE = Pattern.compile("[\\p{IsHan}]+");
     private static final int DREAM_INPUT_CHARS = 14_000;
 
+    /** 记忆信号标记：主模型在值得沉淀的轮次末尾输出，AgentLoop 据此门控 remember。 */
+    public static final String MEMORY_SIGNAL = "<memory-signal/>";
+
+    /** 小库短路阈值：条数不超过此值时 recall 跳过 LLM 挑选，直接全量注入（更便宜也更准）。 */
+    private static final int SMALL_STORE_THRESHOLD = 3;
+
     private final MemoryStore store;
     private final boolean autoExtract;
     private final int consolidateThreshold;
+    private final int maxIndexEntries;
     private final int maxPerTurnInjections;
     private final int maxInjectionChars;
     private final OpenAiChatModel model; // 独立同步模型（null = 模型不可用 → 记忆功能静默降级）
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    /** dream 进行中标记：整库替换期间 remember 跳过（避免并发写入被替换覆盖），也防止重复触发。 */
+    private final AtomicBoolean dreaming = new AtomicBoolean(false);
+
     public MemoryService(AppConfig appConfig, MemoryStore store, AppConfig.MemoryConfig config) {
         this.store = store;
         this.autoExtract = config != null && config.isAutoExtract();
         this.consolidateThreshold = config != null ? config.getConsolidateThreshold() : 10;
+        this.maxIndexEntries = config != null ? config.getMaxIndexEntries() : 200;
         this.maxPerTurnInjections = config != null ? config.getMaxPerTurnInjections() : 5;
         this.maxInjectionChars = config != null ? config.getMaxInjectionChars() : 12_000;
         this.model = buildModel(appConfig);
@@ -86,6 +98,7 @@ public class MemoryService {
      * 从历史里挑最近几条用户消息作为上下文，让 LLM 从记忆目录里选出相关条目，
      * 返回其完整正文（包在 {@code <relevant_memories>} 里）。返回空串表示无可注入内容。
      * 空库直接返回空串（省一次无谓的模型往返）。任何失败退化为关键词匹配。
+     * 小库（≤{@value #SMALL_STORE_THRESHOLD} 条）短路：跳过 LLM 挑选直接全量注入。
      */
     public String recall(List<ChatMessage> history) {
         if (store == null || store.isEmpty()) {
@@ -96,6 +109,16 @@ public class MemoryService {
             return "";
         }
 
+        List<Integer> selected;
+        if (store.size() <= SMALL_STORE_THRESHOLD) {
+            // 小库全量注入：挑选这一步纯属浪费一次模型往返，且条目少时全注比挑得更准
+            selected = new ArrayList<>();
+            for (int i = 0; i < store.size(); i++) {
+                selected.add(i);
+            }
+            return renderSelected(selected);
+        }
+
         String catalog = buildCatalog();
         String prompt = "给定下面的最近对话和记忆目录，挑选其中<b>明确相关</b>的记忆条目的索引号。"
                 + "只返回一个 JSON 数组，例如 [0, 3]；都不相关则返回 []。"
@@ -103,7 +126,7 @@ public class MemoryService {
                 + "最近对话:\n" + recent + "\n\n"
                 + "记忆目录:\n" + catalog;
 
-        List<Integer> selected = null;
+        selected = null;
         if (model != null) {
             try {
                 selected = parseIndexArray(callLlm(prompt));
@@ -120,6 +143,11 @@ public class MemoryService {
         if (selected.isEmpty()) {
             return "";
         }
+        return renderSelected(selected);
+    }
+
+    /** 按索引渲染召回正文（条数/字符预算受限），是 recall 所有路径共用的出口。 */
+    private String renderSelected(List<Integer> selected) {
         StringBuilder sb = new StringBuilder("<relevant_memories>\n");
         int count = 0;
         int chars = 0;
@@ -152,7 +180,8 @@ public class MemoryService {
     private String buildCatalog() {
         StringBuilder sb = new StringBuilder();
         List<MemoryStore.Memory> list = store.list();
-        for (int i = 0; i < list.size(); i++) {
+        int limit = Math.min(list.size(), maxIndexEntries); // 与 MEMORY.md 索引同一上限，防 dream 失效后无限膨胀
+        for (int i = 0; i < limit; i++) {
             MemoryStore.Memory m = list.get(i);
             sb.append(i).append(": ").append(m.name()).append(" — ").append(m.description()).append('\n');
         }
@@ -196,11 +225,17 @@ public class MemoryService {
     // ────────────────────────────────────────────────────────────────────────
 
     /**
-     * 从最近对话抽取新记忆。autoExtract 关闭或模型不可用则直接跳过。
-     * 让 LLM 对照现有记忆去重后返回 {@code [{name,type,description,body}]}；无新增返回 []。
+     * 从最近对话抽取新记忆。autoExtract 关闭或模型不可用则直接跳过；
+     * dream 进行中跳过（整库替换期间的并发写入会被覆盖，不如丢弃这一轮）。
+     * 让 LLM 对照现有记忆去重后返回 {@code [{name,type,description,body}]}；
+     * 用户明确要求「忘记」的目标以 {@code {"delete": "<name或文件名>"}} 返回；无新增返回 []。
      */
     public void remember(List<ChatMessage> history) {
         if (!autoExtract || model == null || store == null) {
+            return;
+        }
+        if (dreaming.get()) {
+            log.debug("dream 进行中，跳过本轮记忆抽取");
             return;
         }
         String dialogue = recentDialogue(history, 4000);
@@ -215,6 +250,8 @@ public class MemoryService {
                 + "- type: user（用户偏好）/ feedback（反馈约定）/ project（项目事实）/ reference（外部指引）\n"
                 + "- description: 一行摘要，供索引查找\n"
                 + "- body: Markdown 全文细节\n"
+                + "用户明确要求「记住/不要忘」的内容必须抽取；用户明确要求「忘记/删掉」的现有记忆，"
+                + "以 {\"delete\": \"<对应记忆的name或文件名>\"} 单独一项返回。\n"
                 + "已被现有记忆覆盖的、或没有持久价值的内容不要抽取；没有新记忆时返回 []。\n\n"
                 + "现有记忆:\n" + existing + "\n\n"
                 + "对话:\n" + dialogue;
@@ -226,8 +263,16 @@ public class MemoryService {
                 return;
             }
             int written = 0;
+            int deleted = 0;
             for (Object itemObj : items) {
                 if (!(itemObj instanceof java.util.Map<?, ?> map)) {
+                    continue;
+                }
+                Object del = map.get("delete");
+                if (del != null && !del.toString().isBlank()) {
+                    if (store.delete(del.toString().trim())) {
+                        deleted++;
+                    }
                     continue;
                 }
                 Object name = map.get("name");
@@ -250,6 +295,9 @@ public class MemoryService {
             if (written > 0) {
                 System.out.println("\n[33m[Memory: extracted " + written + " new memories][0m");
             }
+            if (deleted > 0) {
+                System.out.println("\n[33m[Memory: deleted " + deleted + " memories on user request][0m");
+            }
         } catch (Exception e) {
             log.warn("记忆抽取失败（不影响对话）: {}", e.getMessage());
         }
@@ -260,18 +308,43 @@ public class MemoryService {
     // ────────────────────────────────────────────────────────────────────────
 
     /**
-     * 记忆文件数超过阈值时，让 LLM 合并重复、清理过时、保留用户偏好。
-     * 单批输入受字符预算限制，没交给模型的条目原样保留；目标压缩到阈值的一半左右。
-     * 任何失败都静默，保留原记忆不丢。
+     * 后台异步整理：轮末不再同步等待整库 LLM 调用（一次 14k 字符输入的往返会明显卡顿），
+     * 整理完成前旧版本照常服务。{@code dreaming} 标记防止重复触发，也让并发的 remember 跳过
+     * （整库替换期间的写入会被 {@code replaceAll} 覆盖，不如丢弃那一轮）。
+     *
+     * @param force    true 时跳过阈值检查（{@code /memory dream} 手动触发用）
+     * @param notifier 整理完成（且有变更）时的回调（如 UI 提示），可为 null
      */
-    public void dream() {
+    public void dreamAsync(boolean force, java.util.function.Consumer<String> notifier) {
         if (store == null || model == null || store.isEmpty()) {
             return;
         }
-        if (consolidateThreshold <= 0 || store.size() <= consolidateThreshold) {
+        if (!force && (consolidateThreshold <= 0 || store.size() <= consolidateThreshold)) {
             return;
         }
+        if (!dreaming.compareAndSet(false, true)) {
+            return; // 已有整理在进行
+        }
+        Thread.ofVirtual().name("memory-dream").start(() -> {
+            try {
+                int before = store.size();
+                if (doDream() && notifier != null) {
+                    notifier.accept("🧠 记忆整理完成: " + before + " → " + store.size() + " 条");
+                }
+            } finally {
+                dreaming.set(false);
+            }
+        });
+    }
 
+    /**
+     * 整理的核心实现（在后台线程运行）：让 LLM 合并重复、清理过时、保留用户偏好。
+     * 单批输入受字符预算限制，没交给模型的条目原样保留；目标压缩到阈值的一半左右。
+     * 任何失败都静默，保留原记忆不丢。
+     *
+     * @return 是否实际发生了整库替换
+     */
+    private boolean doDream() {
         List<MemoryStore.Memory> selectedForDream = new ArrayList<>();
         List<MemoryStore.Memory> untouched = new ArrayList<>();
         StringBuilder catalog = new StringBuilder();
@@ -285,8 +358,9 @@ public class MemoryService {
             }
         }
         if (selectedForDream.size() < 2) {
-            return;
+            return false;
         }
+
         int targetCount = Math.min(selectedForDream.size(), Math.max(1, consolidateThreshold / 2));
         String prompt = "整合下面这些记忆文件:\n"
                 + "1. 重复的合并为一条\n"
@@ -299,7 +373,7 @@ public class MemoryService {
             String text = callLlm(prompt);
             List<Object> items = extractJsonArray(text);
             if (items == null || items.isEmpty()) {
-                return;
+                return false;
             }
             List<MemoryStore.Memory> next = new ArrayList<>();
             for (Object itemObj : items) {
@@ -322,16 +396,13 @@ public class MemoryService {
                 next.add(new MemoryStore.Memory("", name.toString().trim(), descStr, typeStr, bodyStr));
             }
             if (next.isEmpty()) {
-                return;
+                return false;
             }
             next.addAll(untouched);
-            int before = store.size();
-            if (!store.replaceAll(next)) {
-                return;
-            }
-            System.out.println("\n[33m[Memory: consolidated " + before + " → " + next.size() + " memories][0m");
+            return store.replaceAll(next);
         } catch (Exception e) {
             log.warn("记忆整合失败（保留原记忆，不影响对话）: {}", e.getMessage());
+            return false;
         }
     }
 
@@ -344,7 +415,10 @@ public class MemoryService {
             return "(无)";
         }
         StringBuilder sb = new StringBuilder();
-        for (MemoryStore.Memory m : store.list()) {
+        List<MemoryStore.Memory> list = store.list();
+        int limit = Math.min(list.size(), maxIndexEntries); // 与索引同一上限，控制 remember 提示词体积
+        for (int i = 0; i < limit; i++) {
+            MemoryStore.Memory m = list.get(i);
             sb.append("- ").append(m.name()).append(": ").append(m.description()).append('\n');
         }
         return sb.toString();

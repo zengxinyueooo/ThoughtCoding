@@ -754,15 +754,25 @@ public class ContextManager {
      * （仿 Claude Code 把易变上下文贴当前用户轮，而非塞进被缓存的 system 前缀）。
      */
     private void appendMemory(StringBuilder sb) {
-        if (memoryStore != null && !memoryStore.isEmpty()) {
+        if (memoryStore == null) {
+            return;
+        }
+        if (!memoryStore.isEmpty()) {
             sb.append("\n## 可用记忆 (Memories)\n");
             sb.append("以下是你长期记住的用户偏好/项目事实/反馈约定（跨会话保留）。\n");
             sb.append("对话中出现相关话题时，应优先遵守其中的用户偏好。\n");
             sb.append(memoryStore.index()).append("\n");
-            sb.append("\n重要：这些记忆文件由记忆系统自动管理（轮次间自动抽取 remember、到达阈值自动整理 dream）。\n");
+            sb.append("\n重要：这些记忆文件由记忆系统自动管理（按信号抽取 remember、到达阈值后台整理 dream）。\n");
             sb.append("【禁止】用 write / edit / bash 等任何工具直接创建、修改、删除 .memory/ 目录下的记忆文件；\n");
             sb.append("如需新增或更新记忆，直接告知用户，由记忆系统自动完成，无需也不应手动操作这些文件。\n");
         }
+        // 信号规则空库时也要注入：否则第一批记忆永远无法触发抽取
+        sb.append("\n## 记忆信号\n");
+        sb.append("若本轮对话中出现值得长期沉淀的内容——用户明确要求「记住/不要忘/忘记」某事、"
+                + "纠正了你的做法、或陈述了新的偏好/约束/项目事实——"
+                + "则在最终回复的末尾单独一行输出标记 ")
+                .append(com.thoughtcoding.memory.MemoryService.MEMORY_SIGNAL).append('\n');
+        sb.append("（记忆系统据此抽取记忆并自动移除该标记，用户可忽略）。没有此类内容时绝不输出该标记。\n");
     }
 
     /**

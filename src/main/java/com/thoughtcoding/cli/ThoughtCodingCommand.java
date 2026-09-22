@@ -5,6 +5,8 @@ import com.thoughtcoding.core.AgentTurnRunner;
 import com.thoughtcoding.core.DirectCommandExecutor;
 import com.thoughtcoding.core.ThoughtCodingContext;
 import com.thoughtcoding.core.WorktreeManager;
+import com.thoughtcoding.memory.MemoryService;
+import com.thoughtcoding.memory.MemoryStore;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.security.Sandbox;
 import com.thoughtcoding.service.SessionService;
@@ -338,6 +340,12 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                     // 📋 计划模式（Plan Mode）：只读研究 → 产出计划 → 批准后执行
                     if (trimmedInput.equals("/plan") || trimmedInput.startsWith("/plan ")) {
                         handlePlanCommand(trimmedInput, agentLoop);
+                        continue;
+                    }
+
+                    // 🧠 长期记忆管理：查看/检索/删除记忆，手动触发整理
+                    if (trimmedInput.equals("/memory") || trimmedInput.startsWith("/memory ")) {
+                        handleMemoryCommand(trimmedInput);
                         continue;
                     }
 
@@ -824,6 +832,93 @@ public class ThoughtCodingCommand implements Callable<Integer> {
         }
     }
 
+    /**
+     * 长期记忆管理命令入口（用户可控性：CC 允许用户当场查看/删除记忆，这里对齐）。
+     *
+     * <pre>
+     *   /memory           列出全部记忆（等价 /memory list）
+     *   /memory show <名称>    显示某条记忆全文（按文件名或 name 匹配）
+     *   /memory delete <名称>  删除某条记忆
+     *   /memory dream      手动触发后台整理（跳过阈值检查）
+     * </pre>
+     */
+    private void handleMemoryCommand(String command) {
+        ThoughtCodingUI ui = context.getUi();
+        MemoryStore store = context.getMemoryStore();
+        if (store == null) {
+            ui.displayWarning("⚠️  记忆功能未启用（config.yaml: memory.enabled=false）");
+            return;
+        }
+        String[] parts = command.trim().split("\\s+");
+        String action = parts.length < 2 ? "list" : parts[1].toLowerCase();
+
+        switch (action) {
+            case "list" -> {
+                if (store.isEmpty()) {
+                    ui.displayInfo("🧠 记忆库为空。对话中让模型记住的内容会自动沉淀到这里。");
+                    return;
+                }
+                StringBuilder sb = new StringBuilder("🧠 记忆库（" + store.size() + " 条，.memory/ 目录）:\n");
+                for (MemoryStore.Memory m : store.list()) {
+                    sb.append("  - ").append(m.name())
+                            .append(" [").append(m.type()).append("] — ")
+                            .append(m.description()).append('\n');
+                }
+                ui.displayInfo(sb.toString());
+            }
+            case "show" -> {
+                if (parts.length < 3) {
+                    ui.displayWarning("用法: /memory show <名称>");
+                    return;
+                }
+                MemoryStore.Memory m = findMemory(store, parts[2]);
+                if (m == null) {
+                    ui.displayWarning("⚠️  未找到记忆: " + parts[2] + "（用 /memory list 查看全部）");
+                    return;
+                }
+                ui.displayInfo("🧠 " + m.name() + " [" + m.type() + "] (" + m.filename() + ")\n"
+                        + m.body());
+            }
+            case "delete", "forget" -> {
+                if (parts.length < 3) {
+                    ui.displayWarning("用法: /memory delete <名称>");
+                    return;
+                }
+                if (store.delete(parts[2])) {
+                    ui.displaySuccess("✅ 已删除记忆: " + parts[2]);
+                } else {
+                    ui.displayWarning("⚠️  未找到记忆: " + parts[2] + "（用 /memory list 查看全部）");
+                }
+            }
+            case "dream" -> {
+                MemoryService memory = context.getMemoryService();
+                if (memory == null) {
+                    ui.displayWarning("⚠️  记忆服务不可用");
+                    return;
+                }
+                memory.dreamAsync(true, msg -> ui.displayInfo(msg));
+                ui.displayInfo("🧠 记忆整理已在后台启动...");
+            }
+            default -> ui.displayInfo("""
+                    🧠 记忆命令：
+                      /memory                列出全部记忆
+                      /memory show <名称>    查看某条记忆全文
+                      /memory delete <名称>  删除某条记忆
+                      /memory dream          手动触发后台整理""");
+        }
+    }
+
+    /** 按文件名（可省略 .md）或 name 精确匹配一条记忆。 */
+    private MemoryStore.Memory findMemory(MemoryStore store, String target) {
+        String filename = target.endsWith(".md") ? target : target + ".md";
+        for (MemoryStore.Memory m : store.list()) {
+            if (m.filename().equals(filename) || m.name().equals(target)) {
+                return m;
+            }
+        }
+        return null;
+    }
+
     private void showHelp() {
         context.getUi().displayInfo("""
                         🚀 可用命令：
@@ -841,6 +936,12 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                                                                   /plan          进入计划模式（只读研究后产出计划）
                                                                   /plan approve  批准计划并开始执行
                                                                   /plan exit     放弃计划
+                                                               \s
+                                                                🧠 长期记忆：
+                                                                  /memory                列出全部记忆
+                                                                  /memory show <名称>    查看某条记忆
+                                                                  /memory delete <名称>  删除某条记忆
+                                                                  /memory dream          手动触发整理
                                                                \s
                                                                 🔧 直接命令：
                                                                   java version  直接执行Java命令

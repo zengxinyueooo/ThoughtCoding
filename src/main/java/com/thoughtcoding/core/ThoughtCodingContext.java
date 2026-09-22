@@ -69,6 +69,7 @@ public class ThoughtCodingContext implements AutoCloseable {
     private volatile ConsoleInputRouter consoleInputRouter;
     // 🔥 新增记忆系统（LLM 驱动：召回/储存/整理；非工具）
     private final MemoryService memoryService;
+    private final MemoryStore memoryStore; // 可为 null = 记忆功能关闭；/memory 用户命令直接访问存储层
 
     private ThoughtCodingContext(Builder builder) {
         this.appConfig = builder.appConfig;
@@ -85,6 +86,7 @@ public class ThoughtCodingContext implements AutoCloseable {
         this.contextManager = builder.contextManager;
         this.subAgentExecutor = builder.subAgentExecutor;
         this.memoryService = builder.memoryService;
+        this.memoryStore = builder.memoryStore;
     }
 
     public static ThoughtCodingContext initialize() {
@@ -193,7 +195,8 @@ public class ThoughtCodingContext implements AutoCloseable {
                 .mcpToolManager(mcpToolManager)
                 .contextManager(contextManager)  // 🔥 添加 contextManager
                 .subAgentExecutor(subAgentExecutor)
-                .memoryService(memoryService)   // 🔥 添加 memoryService（可为 null = 记忆关闭）
+                .memoryService(memoryService)
+                .memoryStore(memoryStore)   // 🔥 添加 memoryService（可为 null = 记忆关闭）
                 .build();
 
         try {
@@ -417,6 +420,7 @@ public class ThoughtCodingContext implements AutoCloseable {
 
     // 🔥 新增 memoryService Getter（可为 null = 记忆功能关闭）
     public MemoryService getMemoryService() { return memoryService; }
+    public MemoryStore getMemoryStore() { return memoryStore; }
     public ThoughtCodingUI getUi() { return ui; }
     public PerformanceMonitor getPerformanceMonitor() { return performanceMonitor; }
     public HookRegistry getHookRegistry() { return hookRegistry; }
@@ -471,6 +475,7 @@ public class ThoughtCodingContext implements AutoCloseable {
         private SubAgentExecutor subAgentExecutor;
         // 🔥 新增记忆系统字段
         private MemoryService memoryService;
+        private MemoryStore memoryStore;
 
         public Builder appConfig(AppConfig appConfig) {
             this.appConfig = appConfig;
@@ -537,6 +542,11 @@ public class ThoughtCodingContext implements AutoCloseable {
         // 🔥 新增 memoryService Builder 方法
         public Builder memoryService(MemoryService memoryService) {
             this.memoryService = memoryService;
+            return this;
+        }
+
+        public Builder memoryStore(MemoryStore memoryStore) {
+            this.memoryStore = memoryStore;
             return this;
         }
 
