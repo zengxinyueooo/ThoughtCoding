@@ -109,14 +109,17 @@ public class MemoryService {
             return "";
         }
 
+        // 单次快照，全程复用：dream 后台整库替换期间，目录/正文若各自取 list 会错位注入
+        List<MemoryStore.Memory> memories = store.list();
+
         List<Integer> selected;
-        if (store.size() <= SMALL_STORE_THRESHOLD) {
+        if (memories.size() <= SMALL_STORE_THRESHOLD) {
             // 小库全量注入：挑选这一步纯属浪费一次模型往返，且条目少时全注比挑得更准
             selected = new ArrayList<>();
-            for (int i = 0; i < store.size(); i++) {
+            for (int i = 0; i < memories.size(); i++) {
                 selected.add(i);
             }
-            return renderSelected(selected);
+            return renderSelected(selected, memories);
         }
 
         String catalog = buildCatalog();
@@ -143,15 +146,14 @@ public class MemoryService {
         if (selected.isEmpty()) {
             return "";
         }
-        return renderSelected(selected);
+        return renderSelected(selected, memories);
     }
 
     /** 按索引渲染召回正文（条数/字符预算受限），是 recall 所有路径共用的出口。 */
-    private String renderSelected(List<Integer> selected) {
+    private String renderSelected(List<Integer> selected, List<MemoryStore.Memory> memories) {
         StringBuilder sb = new StringBuilder("<relevant_memories>\n");
         int count = 0;
         int chars = 0;
-        List<MemoryStore.Memory> memories = store.list();
         for (int idx : selected) {
             if (count >= maxPerTurnInjections) {
                 break;
