@@ -56,6 +56,48 @@ class MemoryServiceTest {
     }
 
     @Test
+    void keywordScoringSelectsRelevantMemoryInLargerStore() {
+        MemoryStore store = MemoryStore.load(tempDir, 20);
+        store.write("tab-indent", "user", "缩进偏好", "用户偏好使用tab缩进。");
+        store.write("commit-style", "feedback", "提交信息风格", "提交信息用中文详细描述。");
+        store.write("db-config", "project", "数据库配置", "项目使用PostgreSQL。");
+        store.write("test-cmd", "project", "测试命令", "用mvn test跑测试。");
+        MemoryService service = new MemoryService(new AppConfig(), store, new AppConfig.MemoryConfig());
+
+        String recalled = service.recall(List.of(new ChatMessage("user", "帮我按我的缩进偏好改这个文件")));
+
+        assertTrue(recalled.contains("tab缩进"));
+        assertFalse(recalled.contains("PostgreSQL"));
+    }
+
+    @Test
+    void keywordScoringReturnsEmptyWhenNothingRelevant() {
+        MemoryStore store = MemoryStore.load(tempDir, 20);
+        store.write("tab-indent", "user", "缩进偏好", "用户偏好使用tab缩进。");
+        store.write("commit-style", "feedback", "提交信息风格", "提交信息用中文详细描述。");
+        store.write("db-config", "project", "数据库配置", "项目使用PostgreSQL。");
+        store.write("test-cmd", "project", "测试命令", "用mvn test跑测试。");
+        MemoryService service = new MemoryService(new AppConfig(), store, new AppConfig.MemoryConfig());
+
+        String recalled = service.recall(List.of(new ChatMessage("user", "今天天气怎么样")));
+
+        assertEquals("", recalled);
+    }
+
+    @Test
+    void selectByKeywordRanksIndexFieldHitsAboveBodyHits() {
+        // 第三条完全无关是必要条件：关键词必须只命中部分记忆（df<N），否则 IDF=ln(N/N)=0
+        List<MemoryStore.Memory> memories = List.of(
+                new MemoryStore.Memory("", "editor", "标签页布局", "user", "无关正文"),
+                new MemoryStore.Memory("", "other", "无关描述", "user", "正文里提到标签页一次"),
+                new MemoryStore.Memory("", "misc", "其他配置", "user", "完全无关"));
+
+        List<Integer> ranked = MemoryService.selectByKeyword(memories, "请用标签页");
+
+        assertEquals(List.of(0, 1), ranked);
+    }
+
+    @Test
     void recallContextKeepsTheNewestPartWhenItExceedsBudget() {
         List<ChatMessage> history = List.of(
                 new ChatMessage("user", "older-question"),

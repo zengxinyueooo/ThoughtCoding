@@ -10,8 +10,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
@@ -24,7 +26,7 @@ import java.util.regex.Pattern;
  * 它们由 {@code AgentLoop} 生命周期编排，模型永远不会看到记忆工具。
  *
  * <ul>
- *   <li>{@link #recall}：取最近对话，让 LLM 从记忆索引里挑相关条目，把完整正文注入本轮 system prompt。</li>
+ *   <li>{@link #recall}：取最近对话，本地 IDF 加权关键词打分挑相关条目（零 API 调用），把完整正文注入本轮消息尾部。</li>
  *   <li>{@link #remember}：每轮结束，让 LLM 从对话里抽取新记忆（对现有记忆去重后落盘）。</li>
  *   <li>{@link #dreamAsync}：记忆文件数达到阈值时在后台线程让 LLM 整合/合并/清理全部记忆。</li>
  * </ul>
@@ -95,10 +97,10 @@ public class MemoryService {
     // ────────────────────────────────────────────────────────────────────────
 
     /**
-     * 从历史里挑最近几条用户消息作为上下文，让 LLM 从记忆目录里选出相关条目，
+     * 从历史里取最近几条用户消息，用本地 IDF 加权关键词打分选出相关条目，
      * 返回其完整正文（包在 {@code <relevant_memories>} 里）。返回空串表示无可注入内容。
-     * 空库直接返回空串（省一次无谓的模型往返）。任何失败退化为关键词匹配。
-     * 小库（≤{@value #SMALL_STORE_THRESHOLD} 条）短路：跳过 LLM 挑选直接全量注入。
+     * 空库直接返回空串；小库（≤{@value #SMALL_STORE_THRESHOLD} 条）短路全量注入；
+     * 中大库走 {@link #selectByKeyword}（零 API 调用，体量论证见其注释）。
      */
     public String recall(List<ChatMessage> history) {
         if (store == null || store.isEmpty()) {
@@ -114,7 +116,7 @@ public class MemoryService {
 
         List<Integer> selected;
         if (memories.size() <= SMALL_STORE_THRESHOLD) {
-            // 小库全量注入：挑选这一步纯属浪费一次模型往返，且条目少时全注比挑得更准
+            // 小库全量注入：条目这么少时全注比挑得更准，也省一次打分
             selected = new ArrayList<>();
             for (int i = 0; i < memories.size(); i++) {
                 selected.add(i);
@@ -122,27 +124,10 @@ public class MemoryService {
             return renderSelected(selected, memories);
         }
 
-        String catalog = buildCatalog();
-        String prompt = "给定下面的最近对话和记忆目录，挑选其中<b>明确相关</b>的记忆条目的索引号。"
-                + "只返回一个 JSON 数组，例如 [0, 3]；都不相关则返回 []。"
-                + "索引必须是记忆目录中真实存在的编号（范围 0 到 N-1，N 为目录条数），不要返回越界的索引。\n\n"
-                + "最近对话:\n" + recent + "\n\n"
-                + "记忆目录:\n" + catalog;
-
-        selected = null;
-        if (model != null) {
-            try {
-                selected = parseIndexArray(callLlm(prompt));
-            } catch (Exception ignored) {
-                selected = null;
-            }
-        }
-
-        // 失败退化为关键词匹配（对 name+description）
-        if (selected == null) {
-            selected = keywordFallback(recent);
-        }
-
+        // 检索主路径：本地 IDF 加权关键词打分，零 API 调用。
+        // 体量论证见 selectByKeyword：dream 阈值把库摁在 ~10 条，这个规模上
+        // LLM 挑选的质量优势可忽略，而每轮一次的模型往返是纯经常性成本。
+        selected = selectByKeyword(memories, recent);
         if (selected.isEmpty()) {
             return "";
         }
@@ -179,20 +164,72 @@ public class MemoryService {
         return sb.toString().stripTrailing();
     }
 
-    private String buildCatalog() {
-        StringBuilder sb = new StringBuilder();
-        List<MemoryStore.Memory> list = store.list();
-        int limit = Math.min(list.size(), maxIndexEntries); // 与 MEMORY.md 索引同一上限，防 dream 失效后无限膨胀
-        for (int i = 0; i < limit; i++) {
-            MemoryStore.Memory m = list.get(i);
-            sb.append(i).append(": ").append(m.name()).append(" — ").append(m.description()).append('\n');
+    /**
+     * IDF 加权关键词打分（检索主路径，零 API 调用）。
+     *
+     * <p>近期对话分词（英文词 &gt;3 字符 + 中文二元组）；每个关键词按「出现在多少条记忆里」算
+     * IDF（idf = ln(N/df)）——到处都出现的词（"我们/一个"类高频二元组）权重自然趋近 0，
+     * 不需要停用词表。命中 name/description 记 2 倍权重（索引字段比正文更可信），命中正文记 1 倍。
+     * 得分 &gt; 0 的按分降序取前 K（K 由 renderSelected 的 maxPerTurnInjections 截断）；
+     * 全零说明无明确相关 → 返回空（coding agent 的记忆宁缺勿错：错误注入的偏好会直接写坏代码）。
+     */
+    static List<Integer> selectByKeyword(List<MemoryStore.Memory> memories, String recent) {
+        Set<String> keywords = tokenize(recent);
+        if (keywords.isEmpty()) {
+            return List.of();
         }
-        return sb.toString();
+        int n = memories.size();
+        List<String> nameDesc = new ArrayList<>(n);
+        List<String> bodies = new ArrayList<>(n);
+        for (MemoryStore.Memory m : memories) {
+            nameDesc.add((m.name() + " " + m.description()).toLowerCase());
+            bodies.add(m.body() == null ? "" : m.body().toLowerCase());
+        }
+
+        // IDF：df = 含该词的记忆条数；df = N（词在每条里都有）时 idf = ln(1) = 0，无区分度
+        Map<String, Double> idf = new LinkedHashMap<>();
+        for (String kw : keywords) {
+            int df = 0;
+            for (int i = 0; i < n; i++) {
+                if (nameDesc.get(i).contains(kw) || bodies.get(i).contains(kw)) {
+                    df++;
+                }
+            }
+            if (df > 0) {
+                idf.put(kw, Math.log((double) n / df));
+            }
+        }
+        if (idf.isEmpty()) {
+            return List.of();
+        }
+
+        double[] scores = new double[n];
+        for (Map.Entry<String, Double> e : idf.entrySet()) {
+            String kw = e.getKey();
+            double w = e.getValue();
+            for (int i = 0; i < n; i++) {
+                if (nameDesc.get(i).contains(kw)) {
+                    scores[i] += 2 * w;
+                } else if (bodies.get(i).contains(kw)) {
+                    scores[i] += w;
+                }
+            }
+        }
+
+        List<Integer> ranked = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            if (scores[i] > 0) {
+                ranked.add(i);
+            }
+        }
+        ranked.sort((a, b) -> Double.compare(scores[b], scores[a]));
+        return ranked;
     }
 
-    private List<Integer> keywordFallback(String recent) {
+    /** 近期文本分词：英文/数字词（&gt;3 字符）+ 中文连续段的所有二元组。 */
+    private static Set<String> tokenize(String text) {
         Set<String> keywords = new LinkedHashSet<>();
-        String normalized = recent.toLowerCase();
+        String normalized = text.toLowerCase();
         Matcher words = WORD.matcher(normalized);
         while (words.find()) {
             String word = words.group();
@@ -207,19 +244,7 @@ public class MemoryService {
                 keywords.add(sequence.substring(i, i + 2));
             }
         }
-        List<Integer> selected = new ArrayList<>();
-        List<MemoryStore.Memory> list = store.list();
-        for (int i = 0; i < list.size() && selected.size() < maxPerTurnInjections; i++) {
-            MemoryStore.Memory m = list.get(i);
-            String hay = (m.name() + " " + m.description()).toLowerCase();
-            for (String kw : keywords) {
-                if (hay.contains(kw)) {
-                    selected.add(i);
-                    break;
-                }
-            }
-        }
-        return selected;
+        return keywords;
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -493,29 +518,6 @@ public class MemoryService {
             return response.aiMessage().text();
         } catch (Exception e) {
             log.warn("记忆模型调用失败: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    /** 从响应里解析整数索引数组（recall 用）。 */
-    private List<Integer> parseIndexArray(String text) {
-        if (text == null) {
-            return null;
-        }
-        Matcher m = JSON_ARRAY.matcher(text);
-        if (!m.find()) {
-            return null;
-        }
-        try {
-            java.util.List<?> arr = objectMapper.readValue(m.group(), java.util.List.class);
-            List<Integer> out = new ArrayList<>();
-            for (Object o : arr) {
-                if (o instanceof Number n) {
-                    out.add(n.intValue());
-                }
-            }
-            return out;
-        } catch (Exception e) {
             return null;
         }
     }
