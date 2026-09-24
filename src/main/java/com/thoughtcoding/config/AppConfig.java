@@ -32,6 +32,9 @@ public class AppConfig {
     @JsonProperty("memory")
     private MemoryConfig memory = new MemoryConfig(); // 记忆系统配置
 
+    @JsonProperty("permissions")
+    private PermissionsConfig permissions = new PermissionsConfig(); // 声明式权限规则
+
 
     // Getters and Setters
     public Map<String, ModelConfig> getModels() {
@@ -81,6 +84,17 @@ public class AppConfig {
 
     public void setMemory(MemoryConfig memory) {
         this.memory = memory;
+    }
+
+    public PermissionsConfig getPermissions() {
+        if (permissions == null) {
+            permissions = new PermissionsConfig();
+        }
+        return permissions;
+    }
+
+    public void setPermissions(PermissionsConfig permissions) {
+        this.permissions = permissions;
     }
 
 
@@ -438,6 +452,48 @@ public class AppConfig {
      * system prompt 索引注入驱动（见 MemoryService / MemoryStore）。
      */
     @Data
+    /**
+     * 声明式权限规则配置（permissions 段）。
+     *
+     * <p>规则语法与层级见 {@link com.thoughtcoding.security.PermissionRules}：
+     * {@code Bash(mvn *)} 前缀通配、{@code Write(.env*)} 路径匹配、裸 {@code Read} 全工具；
+     * 优先级 deny &gt; ask &gt; allow，且永远压不过 bash 硬拒绝列表与计划模式矩阵。
+     */
+    public static class PermissionsConfig {
+        @JsonProperty("allow")
+        private List<String> allow = new ArrayList<>(); // 命中即静默放行（仍受硬拒绝/计划模式约束）
+
+        @JsonProperty("ask")
+        private List<String> ask = new ArrayList<>(); // 命中即强制弹确认
+
+        @JsonProperty("deny")
+        private List<String> deny = new ArrayList<>(); // 命中即硬拒绝
+
+        public List<String> getAllow() {
+            return allow;
+        }
+
+        public void setAllow(List<String> allow) {
+            this.allow = allow;
+        }
+
+        public List<String> getAsk() {
+            return ask;
+        }
+
+        public void setAsk(List<String> ask) {
+            this.ask = ask;
+        }
+
+        public List<String> getDeny() {
+            return deny;
+        }
+
+        public void setDeny(List<String> deny) {
+            this.deny = deny;
+        }
+    }
+
     public static class MemoryConfig {
         @JsonProperty("enabled")
         private boolean enabled = true; // 总开关：装配记忆系统（加载 .memory/、注入索引、召回/储存/整理）

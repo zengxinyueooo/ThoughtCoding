@@ -144,6 +144,12 @@ public class ThoughtCodingContext implements AutoCloseable {
         }
 
         // 服务层初始化
+        // ── 声明式权限规则：permissions.allow/ask/deny 解析后注入全局 Gate（语法错误只跳过该条，不阻塞启动）──
+        AppConfig.PermissionsConfig permCfg = appConfig.getPermissions();
+        com.thoughtcoding.security.PermissionGate.setRules(
+                com.thoughtcoding.security.PermissionRules.parse(
+                        permCfg.getDeny(), permCfg.getAsk(), permCfg.getAllow()));
+
         // ── 记忆系统（非工具）：LLM 驱动召回/储存/整理；memory.enabled=false 或内存分配失败则整体为 null ──
         AppConfig.MemoryConfig memCfg = appConfig.getMemory();
         MemoryStore memoryStore = null;

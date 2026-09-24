@@ -33,12 +33,24 @@ import java.util.Set;
  *   未知工具（含 MCP）  → DENY（无只读标注体系，一律保守）
  *   其余同默认模式；subAgent 放行——子代理内部工具走同一 Gate，约束自动传播。
  *
- * 决策与模式解耦：{@link #check(String, Map)} 读全局 {@link PlanMode}；
- * {@link #check(String, Map, boolean)} 是纯函数，供单测绕过全局状态直接验证规则矩阵。
+ * 决策与模式解耦：{@link #check(String, Map)} 读全局 {@link PlanMode} 与全局声明式规则；
+ * {@link #check(String, Map, boolean)} 是纯函数（不含用户规则），供单测绕过全局状态直接验证规则矩阵。
+ *
+ * <p><b>层级（高 → 低，上层永远压住下层）</b>：bash 硬拒绝列表 → 计划模式矩阵 →
+ * 用户声明式规则（{@link PermissionRules}，deny &gt; ask &gt; allow）→ 内置默认矩阵。
+ * 用户规则不能解锁安全底线：allow 规则永远放不出 {@code rm -rf /}，也绕不开计划模式的写禁令。
  */
 public final class PermissionGate {
 
+    /** 全局声明式规则（启动时由 ThoughtCodingContext 注入；null = 未配置，全走默认矩阵）。 */
+    private static volatile PermissionRules activeRules;
+
     private PermissionGate() {}
+
+    /** 启动时注入解析后的声明式规则（null 清除）。不影响已进行的决策调用。 */
+    public static void setRules(PermissionRules rules) {
+        activeRules = rules;
+    }
 
     // ═══════════════ Gate 1: 硬拒绝列表 ═══════════════
 
@@ -203,23 +215,40 @@ public final class PermissionGate {
     // ═══════════════ 入口 ═══════════════
 
     /**
-     * 一次性权限决策（读取全局 {@link PlanMode} 当前模式）。
+     * 一次性权限决策（读取全局 {@link PlanMode} 当前模式与全局声明式规则）。
      *
      * @return DENY → 拒绝执行；WARN → 弹确认；ALLOW → 静默放行
      */
     public static PermissionResult check(String toolName, Map<String, Object> params) {
-        return check(toolName, params, PlanMode.isActive());
+        return check(toolName, params, PlanMode.isActive(), activeRules);
     }
 
     /**
-     * 带模式的一次性权限决策（纯函数，模式由调用方显式给定，便于测试规则矩阵）。
+     * 带模式的一次性权限决策（纯函数，不含用户声明式规则），供单测直接验证规则矩阵。
      *
      * @param planMode true = 计划模式（只读研究）；false = 默认模式
      * @return DENY → 拒绝执行；WARN → 弹确认；ALLOW → 静默放行
      */
     public static PermissionResult check(String toolName, Map<String, Object> params, boolean planMode) {
+        return check(toolName, params, planMode, null);
+    }
+
+    /**
+     * 完整决策管线（纯函数）：bash 硬拒绝 → 计划模式矩阵 → 用户规则 → 默认矩阵。
+     *
+     * @param rules 用户声明式规则，可为 null（等价于无规则层）
+     */
+    public static PermissionResult check(String toolName, Map<String, Object> params,
+                                         boolean planMode, PermissionRules rules) {
         if (toolName == null) return PermissionResult.warn("⚠️ 未知工具");
 
+        // 层 1：bash 硬拒绝永远最先——用户 allow 规则不能解锁 rm -rf / 一类命令
+        if ("bash".equals(toolName)) {
+            PermissionResult hardDeny = checkBashDeny(paramString(params, "command"));
+            if (hardDeny != null) return hardDeny;
+        }
+
+        // 层 2：计划模式矩阵不可被规则放宽（研究阶段的读写分离是安全底线）
         if (planMode) {
             return switch (toolName) {
                 case "read", "glob" -> checkReadPath(params);
@@ -236,6 +265,19 @@ public final class PermissionGate {
             };
         }
 
+        // 层 3：用户声明式规则（deny > ask > allow），命中即定档
+        if (rules != null) {
+            PermissionRules.Match m = rules.match(toolName, params);
+            if (m != null) {
+                return switch (m.decision()) {
+                    case DENY  -> PermissionResult.deny("⛔ 被 permissions.deny 规则拒绝: " + m.rule());
+                    case ASK   -> PermissionResult.warn("⚠️ permissions.ask 规则要求确认: " + m.rule());
+                    case ALLOW -> PermissionResult.ALLOW;
+                };
+            }
+        }
+
+        // 层 4：内置默认矩阵
         return switch (toolName) {
             case "read", "glob" -> checkReadPath(params);
             case "write"        -> PermissionResult.warn("⚠️ 将写入文件");
