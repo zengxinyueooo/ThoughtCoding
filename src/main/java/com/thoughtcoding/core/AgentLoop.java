@@ -92,6 +92,13 @@ public class AgentLoop {
         this.duplicateCallGuard = new DuplicateToolCallGuard();
         this.hookRegistry.registerFirst(com.thoughtcoding.hook.HookType.PRE_TOOL_USE,
                 this.duplicateCallGuard);
+
+        // 文件检查点：write/edit 前快照目标文件（普通注册=链尾，权限通过后才快照），
+        // 供 /rewind 恢复。快照失败 fail-open，不卡编辑。
+        if (context.getCheckpointStore() != null) {
+            this.hookRegistry.register(com.thoughtcoding.hook.HookType.PRE_TOOL_USE,
+                    new com.thoughtcoding.hook.CheckpointHook(context.getCheckpointStore(), sessionId));
+        }
         this.toolPipeline = new ToolExecutionPipeline(
                 context, this.hookRegistry, context.getToolRegistry());
 

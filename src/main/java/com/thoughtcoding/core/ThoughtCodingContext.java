@@ -6,6 +6,7 @@ import com.thoughtcoding.config.MCPConfig;
 import com.thoughtcoding.hook.HookRegistry;
 import com.thoughtcoding.mcp.MCPService;
 import com.thoughtcoding.mcp.MCPToolManager;
+import com.thoughtcoding.checkpoint.CheckpointStore;
 import com.thoughtcoding.memory.MemoryService;
 import com.thoughtcoding.memory.MemoryStore;
 import com.thoughtcoding.service.AIService;
@@ -70,6 +71,7 @@ public class ThoughtCodingContext implements AutoCloseable {
     // 🔥 新增记忆系统（LLM 驱动：召回/储存/整理；非工具）
     private final MemoryService memoryService;
     private final MemoryStore memoryStore; // 可为 null = 记忆功能关闭；/memory 用户命令直接访问存储层
+    private final CheckpointStore checkpointStore; // /rewind 文件检查点（可为 null = 功能关闭）
 
     private ThoughtCodingContext(Builder builder) {
         this.appConfig = builder.appConfig;
@@ -87,6 +89,7 @@ public class ThoughtCodingContext implements AutoCloseable {
         this.subAgentExecutor = builder.subAgentExecutor;
         this.memoryService = builder.memoryService;
         this.memoryStore = builder.memoryStore;
+        this.checkpointStore = builder.checkpointStore;
     }
 
     public static ThoughtCodingContext initialize() {
@@ -142,6 +145,10 @@ public class ThoughtCodingContext implements AutoCloseable {
         if (!skillRegistry.isEmpty()) {
             toolRegistry.register(new SkillTool(skillRegistry));
         }
+
+        // 文件检查点存储：write/edit 前快照，进程退出整体清理（目录建失败降级 no-op，不阻塞启动）
+        CheckpointStore checkpointStore = CheckpointStore.create(
+                java.nio.file.Paths.get(System.getProperty("user.dir"), "checkpoints"));
 
         // 服务层初始化
         // ── 声明式权限规则：permissions.allow/ask/deny 解析后注入全局 Gate（语法错误只跳过该条，不阻塞启动）──
@@ -202,7 +209,8 @@ public class ThoughtCodingContext implements AutoCloseable {
                 .contextManager(contextManager)  // 🔥 添加 contextManager
                 .subAgentExecutor(subAgentExecutor)
                 .memoryService(memoryService)
-                .memoryStore(memoryStore)   // 🔥 添加 memoryService（可为 null = 记忆关闭）
+                .memoryStore(memoryStore)
+                .checkpointStore(checkpointStore)   // 🔥 添加 memoryService（可为 null = 记忆关闭）
                 .build();
 
         try {
@@ -393,6 +401,9 @@ public class ThoughtCodingContext implements AutoCloseable {
         closeSafely("SubAgent 调度器", () -> {
             if (subAgentExecutor != null) subAgentExecutor.shutdown();
         });
+        closeSafely("检查点存储", () -> {
+            if (checkpointStore != null) checkpointStore.clearAll();
+        });
         shutdownMCP();
         closeSafely("终端", () -> {
             if (ui != null) ui.close();
@@ -427,6 +438,7 @@ public class ThoughtCodingContext implements AutoCloseable {
     // 🔥 新增 memoryService Getter（可为 null = 记忆功能关闭）
     public MemoryService getMemoryService() { return memoryService; }
     public MemoryStore getMemoryStore() { return memoryStore; }
+    public CheckpointStore getCheckpointStore() { return checkpointStore; }
     public ThoughtCodingUI getUi() { return ui; }
     public PerformanceMonitor getPerformanceMonitor() { return performanceMonitor; }
     public HookRegistry getHookRegistry() { return hookRegistry; }
@@ -514,6 +526,7 @@ public class ThoughtCodingContext implements AutoCloseable {
         // 🔥 新增记忆系统字段
         private MemoryService memoryService;
         private MemoryStore memoryStore;
+        private CheckpointStore checkpointStore;
 
         public Builder appConfig(AppConfig appConfig) {
             this.appConfig = appConfig;
@@ -585,6 +598,11 @@ public class ThoughtCodingContext implements AutoCloseable {
 
         public Builder memoryStore(MemoryStore memoryStore) {
             this.memoryStore = memoryStore;
+            return this;
+        }
+
+        public Builder checkpointStore(CheckpointStore checkpointStore) {
+            this.checkpointStore = checkpointStore;
             return this;
         }
 

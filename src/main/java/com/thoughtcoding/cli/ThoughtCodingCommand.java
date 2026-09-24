@@ -349,6 +349,12 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                         continue;
                     }
 
+                    // ⏪ 文件检查点：write/edit 前自动快照，回滚单次修改
+                    if (trimmedInput.equals("/rewind") || trimmedInput.startsWith("/rewind ")) {
+                        handleRewindCommand(trimmedInput, agentLoop);
+                        continue;
+                    }
+
                     // 🚀 新增：检查是否是直接命令执行
                     //TODO ：优化正则检测，降低误判率
                     if (directCommandExecutor.shouldExecuteDirectly(trimmedInput)) {
@@ -919,6 +925,75 @@ public class ThoughtCodingCommand implements Callable<Integer> {
         return null;
     }
 
+    /**
+     * 文件检查点命令入口。
+     *
+     * <pre>
+     *   /rewind            列出本会话全部检查点（等价 /rewind list）
+     *   /rewind list       同上
+     *   /rewind &lt;序号&gt;    恢复该检查点：文件内容写回，或（原本不存在时）删除
+     * </pre>
+     *
+     * <p>检查点在每次 write/edit 执行前自动创建（权限通过才会快照），进程退出时清理。
+     * 恢复后模型需重新 read 才能 edit（stale-read 一致性校验会拦截基于旧内容的编辑）。
+     */
+    private void handleRewindCommand(String command, AgentLoop agentLoop) {
+        ThoughtCodingUI ui = context.getUi();
+        com.thoughtcoding.checkpoint.CheckpointStore store = context.getCheckpointStore();
+        if (store == null) {
+            ui.displayWarning("⚠️  检查点功能不可用");
+            return;
+        }
+        String sessionId = agentLoop != null ? agentLoop.getSessionId() : currentSessionId;
+        String[] parts = command.trim().split("\\s+");
+        String action = parts.length < 2 ? "list" : parts[1];
+
+        if ("list".equals(action)) {
+            var checkpoints = store.list(sessionId);
+            if (checkpoints.isEmpty()) {
+                ui.displayInfo("⏳ 本会话暂无检查点（write/edit 执行前会自动创建）");
+                return;
+            }
+            StringBuilder sb = new StringBuilder("⏳ 本会话检查点（" + checkpoints.size() + " 个，"
+                    + "/rewind <序号> 恢复）:\n");
+            java.time.format.DateTimeFormatter fmt =
+                    java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss").withZone(java.time.ZoneId.systemDefault());
+            for (var cp : checkpoints) {
+                String file = cp.originalPath();
+                int slash = Math.max(file.lastIndexOf('/'), file.lastIndexOf('\\'));
+                if (slash >= 0 && file.length() - slash < 60) {
+                    file = file.substring(slash + 1); // 短名只显示文件名，长路径保持全量便于区分
+                }
+                sb.append(String.format("  %-4d %s  %-9s %s%s%n", cp.seq(),
+                        fmt.format(java.time.Instant.ofEpochMilli(cp.timestamp())),
+                        cp.existed() ? "快照" : "原不存在",
+                        file, cp.reason().isEmpty() ? "" : "（" + cp.reason() + "）"));
+            }
+            ui.displayInfo(sb.toString());
+            return;
+        }
+
+        int seq;
+        try {
+            seq = Integer.parseInt(action);
+        } catch (NumberFormatException e) {
+            ui.displayWarning("用法: /rewind list | /rewind <序号>");
+            return;
+        }
+        var target = store.list(sessionId).stream()
+                .filter(cp -> cp.seq() == seq).findFirst().orElse(null);
+        if (target == null) {
+            ui.displayWarning("⚠️  未找到检查点 " + seq + "（用 /rewind list 查看）");
+            return;
+        }
+        if (store.restore(sessionId, seq)) {
+            ui.displaySuccess("✅ 已恢复检查点 " + seq + ": "
+                    + (target.existed() ? "内容已写回 " : "已删除 ") + target.originalPath());
+        } else {
+            ui.displayError("❌ 恢复失败（详见日志）");
+        }
+    }
+
     private void showHelp() {
         context.getUi().displayInfo("""
                         🚀 可用命令：
@@ -942,6 +1017,10 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                                                                   /memory show <名称>    查看某条记忆
                                                                   /memory delete <名称>  删除某条记忆
                                                                   /memory dream          手动触发整理
+                                                               \s
+                                                                ⏪ 文件检查点：
+                                                                  /rewind               列出检查点
+                                                                  /rewind <序号>        回滚单次修改
                                                                \s
                                                                 🔧 直接命令：
                                                                   java version  直接执行Java命令
