@@ -196,7 +196,7 @@ public class ThoughtCodingContext implements AutoCloseable {
                 .toolRegistry(toolRegistry)
                 .ui(ui)
                 .performanceMonitor(performanceMonitor)
-                .hookRegistry(new HookRegistry())
+                .hookRegistry(buildHookRegistry(appConfig))
                 .mcpService(mcpService)
                 .mcpToolManager(mcpToolManager)
                 .contextManager(contextManager)  // 🔥 添加 contextManager
@@ -460,6 +460,38 @@ public class ThoughtCodingContext implements AutoCloseable {
             }
         }
         return registered;
+    }
+
+    /**
+     * 构建应用级 Hook 注册表，并挂载 config.yaml 声明的外部命令 Hook（hooks 段）。
+     * 注册在应用级链的末尾：各 Agent 派生的副本里，权限门/重复调用熔断等内置安全动作
+     * 经 registerFirst 恒在前，用户扩展永远后于安全检查执行。command 为空/空白的条目跳过并告警。
+     */
+    private static HookRegistry buildHookRegistry(AppConfig appConfig) {
+        HookRegistry registry = new HookRegistry();
+        AppConfig.HooksConfig hooksCfg = appConfig != null ? appConfig.getHooks() : null;
+        if (hooksCfg == null) {
+            return registry;
+        }
+        registerExternalHooks(registry, com.thoughtcoding.hook.HookType.USER_PROMPT_SUBMIT, hooksCfg.getUserPromptSubmit());
+        registerExternalHooks(registry, com.thoughtcoding.hook.HookType.PRE_TOOL_USE, hooksCfg.getPreToolUse());
+        registerExternalHooks(registry, com.thoughtcoding.hook.HookType.POST_TOOL_USE, hooksCfg.getPostToolUse());
+        registerExternalHooks(registry, com.thoughtcoding.hook.HookType.STOP, hooksCfg.getStop());
+        return registry;
+    }
+
+    private static void registerExternalHooks(HookRegistry registry, com.thoughtcoding.hook.HookType type,
+                                              java.util.List<AppConfig.HookSpec> specs) {
+        if (specs == null) {
+            return;
+        }
+        for (AppConfig.HookSpec spec : specs) {
+            if (spec == null || spec.getCommand() == null || spec.getCommand().isBlank()) {
+                continue;
+            }
+            registry.register(type, new com.thoughtcoding.hook.ExternalCommandHook(
+                    spec.getCommand().strip(), spec.getMatcher(), spec.getTimeout()));
+        }
     }
 
     // Builder模式

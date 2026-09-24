@@ -35,6 +35,9 @@ public class AppConfig {
     @JsonProperty("permissions")
     private PermissionsConfig permissions = new PermissionsConfig(); // 声明式权限规则
 
+    @JsonProperty("hooks")
+    private HooksConfig hooks = new HooksConfig(); // 用户可配置外部命令 Hook
+
 
     // Getters and Setters
     public Map<String, ModelConfig> getModels() {
@@ -95,6 +98,17 @@ public class AppConfig {
 
     public void setPermissions(PermissionsConfig permissions) {
         this.permissions = permissions;
+    }
+
+    public HooksConfig getHooks() {
+        if (hooks == null) {
+            hooks = new HooksConfig();
+        }
+        return hooks;
+    }
+
+    public void setHooks(HooksConfig hooks) {
+        this.hooks = hooks;
     }
 
 
@@ -491,6 +505,95 @@ public class AppConfig {
 
         public void setDeny(List<String> deny) {
             this.deny = deny;
+        }
+    }
+
+    /**
+     * 用户可配置外部命令 Hook（hooks 段）。
+     *
+     * <p>语义见 {@link com.thoughtcoding.hook.ExternalCommandHook}：事件 JSON 经 stdin 传入命令；
+     * 退出码 0 放行（UserPromptSubmit 的 stdout 注入模型上下文）、2 阻断（STOP 转续跑）、
+     * 其他/超时降级放行。命令来自用户本地配置，非对话内容。
+     */
+    public static class HooksConfig {
+        @JsonProperty("UserPromptSubmit")
+        private List<HookSpec> userPromptSubmit;
+
+        @JsonProperty("PreToolUse")
+        private List<HookSpec> preToolUse;
+
+        @JsonProperty("PostToolUse")
+        private List<HookSpec> postToolUse;
+
+        @JsonProperty("Stop")
+        private List<HookSpec> stop;
+
+        public List<HookSpec> getUserPromptSubmit() {
+            return userPromptSubmit;
+        }
+
+        public void setUserPromptSubmit(List<HookSpec> userPromptSubmit) {
+            this.userPromptSubmit = userPromptSubmit;
+        }
+
+        public List<HookSpec> getPreToolUse() {
+            return preToolUse;
+        }
+
+        public void setPreToolUse(List<HookSpec> preToolUse) {
+            this.preToolUse = preToolUse;
+        }
+
+        public List<HookSpec> getPostToolUse() {
+            return postToolUse;
+        }
+
+        public void setPostToolUse(List<HookSpec> postToolUse) {
+            this.postToolUse = postToolUse;
+        }
+
+        public List<HookSpec> getStop() {
+            return stop;
+        }
+
+        public void setStop(List<HookSpec> stop) {
+            this.stop = stop;
+        }
+    }
+
+    /** 单条外部命令 Hook 声明。 */
+    public static class HookSpec {
+        @JsonProperty("matcher")
+        private String matcher; // 工具名正则；缺省匹配全部（仅对工具类事件有意义）
+
+        @JsonProperty("command")
+        private String command; // shell 命令（Windows 经 cmd /c，其余经 sh -c）
+
+        @JsonProperty("timeout")
+        private Integer timeout; // 秒，缺省 30
+
+        public String getMatcher() {
+            return matcher;
+        }
+
+        public void setMatcher(String matcher) {
+            this.matcher = matcher;
+        }
+
+        public String getCommand() {
+            return command;
+        }
+
+        public void setCommand(String command) {
+            this.command = command;
+        }
+
+        public Integer getTimeout() {
+            return timeout;
+        }
+
+        public void setTimeout(Integer timeout) {
+            this.timeout = timeout;
         }
     }
 
