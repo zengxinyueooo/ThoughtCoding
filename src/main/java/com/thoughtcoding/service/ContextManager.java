@@ -30,7 +30,8 @@ import java.util.List;
  * <ol>
  *   <li><b>L3 toolResultBudget</b>：单条巨型工具结果落盘，上下文只留标记+预览（<b>必须最先</b>，趁全文还在）。</li>
  *   <li><b>L1 snipCompact</b>：消息条数超限时裁掉中段，保留头尾（带工具配对边界保护）。</li>
- *   <li><b>L2 microCompact</b>：仅最近 N 条工具结果保留全文，更旧的换一行占位。</li>
+ *   <li><b>L2 microCompact</b>：最后一条 assistant 之后的工具结果视为未读并保留全文；
+ *       已读结果里仅最近 N 条保留全文，更早的换一行占位。</li>
  *   <li><b>L4 compactHistory</b>：前三层跑完仍超 token 阈值时，落盘完整对话并用 LLM 摘要替换旧历史。</li>
  * </ol>
  * 最后统一经 {@link #sanitizeToolPairs} 兜底工具调用/结果配对，保证不触发模型 400。
@@ -49,7 +50,7 @@ public class ContextManager {
     private int maxMessages = 50;               // L1 触发的消息数上限
     private int snipKeepHead = 3;               // L1 保留头部条数
     private int snipKeepTail = 20;              // L1 保留尾部条数
-    private int keepRecentToolResults = 3;      // L2 保留最近工具结果全文条数
+    private int keepRecentToolResults = 3;      // L2：已读结果里保留全文的条数（未读不占名额）
     private int maxToolResultBytes = 200000;    // L3 当轮工具结果聚合预算（UTF-8 字节）：这批总量超过才触发落盘
     private int perResultPersistBytes = 30000;  // L3 单块落盘阈值：触发后只落单条超过此值的结果
     private int l4KeepTail = 6;                 // L4 摘要后保留尾部条数
@@ -144,7 +145,7 @@ public class ContextManager {
     /**
      * 获取适合发送给 AI 的上下文——四层压缩管线。
      *
-     * <p>顺序严格不可换：L3(落盘) → L1(裁中段) → L2(旧结果占位) → L4(超阈值则摘要) → 配对兜底。
+     * <p>顺序严格不可换：L3(落盘) → L1(裁中段) → L2(已读旧结果占位) → L4(超阈值则摘要) → 配对兜底。
      * 入口统一深拷贝一次，后续各层只动副本，绝不修改传入的 {@code fullHistory}。
      *
      * @param fullHistory 完整的对话历史（只读，不会被修改）
@@ -174,7 +175,7 @@ public class ContextManager {
 
         work = toolResultBudget(work);   // L3：当轮工具结果聚合超预算才落盘其中最大的几块（正常单次 read 不碰）
         work = snipCompact(work);        // L1：消息数超限裁中段（边界保护）
-        work = microCompact(work);       // L2：最近 N 条全文，更旧的占位（跳过 L3 已落盘标记）
+        work = microCompact(work);       // L2：未读结果保留全文；已读里最近 N 条全文，更早占位（跳过 L3 已落盘标记）
 
         if (estimateTotalTokens(work) > historyBudget) {
             work = compactHistory(work, fullHistory); // L4：LLM 摘要，返回新列表，只读 fullHistory
@@ -490,22 +491,39 @@ public class ContextManager {
     }
 
     // ────────────────────────────────────────────────────────────────────────
-    // L2：旧工具结果占位
+    // L2：已读旧工具结果占位（最后一条 assistant 之后的未读结果不动）
     // ────────────────────────────────────────────────────────────────────────
 
     /**
-     * L2：仅保留最近 {@link #keepRecentToolResults} 条工具结果的全文，更旧的换成一行占位
-     * （只截断内容，不删消息、不动 role/toolCallId，保持配对）。入参已是副本，原地改。
-     * 已被 L3 落盘的旧结果（带 {@code <persisted-output>} 标记）跳过——保留其预览+磁盘路径，不覆盖成占位。
+     * L2：在副本里从后往前找到最后一条 {@code role=assistant}。它之后的 {@code role=tool} 全部视为未读，
+     * 一条都不替换；没有 assistant 时，全部工具结果都视为未读。
+     *
+     * <p>只对已读结果保留最近 {@link #keepRecentToolResults} 条全文，更早的换成一行占位
+     * （只改 content，不删消息、不动 role/toolCallId/toolName）。最近 N 条的名额只从已读结果里计，
+     * 未读结果不占名额。分界是最后一条 assistant，而不是尾部连续的 tool 批——回喂前可能已经在结果后面
+     * 追加了 user/system。
+     *
+     * <p>已读结果里，content 为 null、长度不超过 100，或以 {@code <persisted-output } 开头的跳过。
+     * 入参已是副本，原地改。不在这里落盘，当轮超大结果仍由 L3 处理。
      */
     private List<ChatMessage> microCompact(List<ChatMessage> work) {
-        List<ChatMessage> toolResults = collectToolResultMessages(work);
-        if (toolResults.size() <= keepRecentToolResults) {
+        int lastAssistant = -1;
+        for (int i = work.size() - 1; i >= 0; i--) {
+            ChatMessage msg = work.get(i);
+            if (msg != null && msg.isAssistantMessage()) {
+                lastAssistant = i;
+                break;
+            }
+        }
+
+        // 已读 = 最后一条 assistant 及其之前的 role=tool。下标 lastAssistant 之后（或没有 assistant）都不参与替换。
+        List<ChatMessage> readResults = collectToolResultMessages(work.subList(0, lastAssistant + 1));
+        if (readResults.size() <= keepRecentToolResults) {
             return work;
         }
 
-        // 压缩早期的工具结果（除了最后 keepRecentToolResults 条）——只截断内容，保持配对
-        List<ChatMessage> toCompact = toolResults.subList(0, toolResults.size() - keepRecentToolResults);
+        // 只压缩已读结果里更早的部分。未读结果不进入这个列表，因此不会占掉最近 N 条的名额。
+        List<ChatMessage> toCompact = readResults.subList(0, readResults.size() - keepRecentToolResults);
         for (ChatMessage msg : toCompact) {
             String content = msg.getContent();
             if (content == null || content.length() <= 100) {
@@ -523,8 +541,10 @@ public class ContextManager {
     }
 
     /**
-     * 收集历史中的工具结果消息（原生 role=tool，或旧会话的 role=system + "Tool '" 前缀），按出现顺序。
-     * L2 与 L3 共用它，保证两者对"最近 N 条 / 更旧"的划分完全一致，不产生错位。
+     * 收集给定消息里的 {@code role=tool} 结果，按出现顺序。只被 L2 使用：
+     * {@link #microCompact} 先按最后一条 assistant 切出已读前缀，再在这份结果上保留最近
+     * {@link #keepRecentToolResults} 条全文。L3 另扫尾部连续 tool 批，不走这里，
+     * 两边也不共用同一套「最近 N 条 / 更旧」划分。
      */
     private List<ChatMessage> collectToolResultMessages(List<ChatMessage> work) {
         List<ChatMessage> toolResults = new ArrayList<>();
