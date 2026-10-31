@@ -52,6 +52,12 @@ public class ThoughtCodingCommand implements Callable<Integer> {
     @CommandLine.Option(names = {"-S", "--session"}, description = "Specify session ID")
     private String sessionId;
 
+    @CommandLine.Option(names = "--resume-task", description = "Resume a durable task in its original session")
+    private String resumeTaskId;
+
+    @CommandLine.Option(names = "--list-tasks", description = "List durable tasks in this workspace")
+    private boolean listTasks;
+
     @CommandLine.Option(names = {"-p", "--prompt"}, description = "Single prompt mode")
     private String prompt;
 
@@ -144,6 +150,20 @@ public class ThoughtCodingCommand implements Callable<Integer> {
             // 加载会话历史
             List<ChatMessage> history = new ArrayList<>();
 
+            if (listTasks) {
+                context.getTaskService().recoverInterrupted(null);
+                context.getTaskService().store().list(null).forEach(t -> ui.displayInfo(
+                        t.taskId() + " " + t.status() + " session=" + t.sessionId() + " " + t.objective()));
+                return 0;
+            }
+            if (resumeTaskId != null) {
+                if (prompt != null || continueSession) throw new IllegalArgumentException("--resume-task 不与 -p/-c 同时使用");
+                var saved = context.getTaskService().store().load(resumeTaskId);
+                if (sessionId != null && !sessionId.equals(saved.task().sessionId()))
+                    throw new IllegalArgumentException("--session 与任务所属会话不一致");
+                sessionId = saved.task().sessionId();
+            }
+
             if (continueSession) {
                 currentSessionId = sessionService.getLatestSessionId();
                 if (currentSessionId != null) {
@@ -174,6 +194,13 @@ public class ThoughtCodingCommand implements Callable<Integer> {
             错误处理：处理整个流程中的异常情况*/
             currentAgentLoop = new AgentLoop(context, currentSessionId, modelToUse);
             currentAgentLoop.loadHistory(history);
+            if (context.getTaskService() != null) context.getTaskService().recoverInterrupted(currentSessionId);
+            if (resumeTaskId != null) {
+                if (!currentAgentLoop.resumeTask(resumeTaskId, new com.thoughtcoding.core.CancelToken())) return 1;
+                var status = context.getTaskService().store().load(resumeTaskId).task().status();
+                return status == com.thoughtcoding.task.TaskStatus.FAILED
+                        || status == com.thoughtcoding.task.TaskStatus.INTERRUPTED ? 1 : 0;
+            }
 
             // 单次对话模式
             if (prompt != null) {
@@ -275,6 +302,17 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                     }
 
                     String trimmedInput = input.trim();
+                    if (trimmedInput.equals("/checkpoint") || trimmedInput.startsWith("/checkpoint ")) {
+                        String[] args = trimmedInput.split("\\s+");
+                        if (args.length > 1 && !args[1].equals("list"))
+                            throw new IllegalArgumentException("用法: /checkpoint list [taskId]");
+                        handleTaskCommand("/task checkpoints" + (args.length > 2 ? " " + args[2] : ""), agentLoop, runner);
+                        continue;
+                    }
+                    if (trimmedInput.equals("/task") || trimmedInput.startsWith("/task ")) {
+                        handleTaskCommand(trimmedInput, agentLoop, runner);
+                        continue;
+                    }
 
                     // ── 输入路由：agent 线程的工具确认框正在等待输入 → 优先投递给它 ──
                     com.thoughtcoding.core.ConsoleInputRouter router = context.getConsoleInputRouter();
@@ -386,6 +424,78 @@ public class ThoughtCodingCommand implements Callable<Integer> {
      * 取消当前 agent 回合：先触发回合 CancelToken（跨层传播），
      * 再走 LangChainService 的共享生成状态兜底。
      */
+    private void handleTaskCommand(String command, AgentLoop loop, AgentTurnRunner runner) {
+        var service = context.getTaskService();
+        if (service == null) throw new IllegalStateException("任务服务未启用");
+        String[] parts = command.split("\\s+", 3);
+        String action = parts.length > 1 ? parts[1] : "list";
+        String argument = parts.length > 2 ? parts[2] : runner.isRunning() ? runner.getCurrentTaskId() : loop.getActiveTaskId();
+        var ui = context.getUi();
+        if (action.equals("pause")) {
+            if (parts.length > 2 && !argument.equals(runner.getCurrentTaskId())) {
+                if (!service.store().load(argument).task().sessionId().equals(loop.getSessionId()))
+                    throw new IllegalArgumentException("任务不属于当前会话");
+                ui.displayInfo(context.getSubAgentExecutor().stop(argument, true) ? "正在暂停后台子任务" : "该任务当前没有运行");
+            } else if (runner.pauseCurrent()) { stopCurrentGeneration(); ui.displayInfo("正在暂停任务"); }
+            else ui.displayInfo("当前没有运行中的任务");
+            return;
+        }
+        if (action.equals("cancel") && argument != null) {
+            if (!service.store().load(argument).task().sessionId().equals(loop.getSessionId()))
+                throw new IllegalArgumentException("任务不属于当前会话");
+            if (runner.isRunning() && argument.equals(runner.getCurrentTaskId())) {
+                runner.cancelCurrent(); stopCurrentGeneration(); return;
+            }
+            if (context.getSubAgentExecutor().stop(argument, false)) { ui.displayInfo("正在取消后台子任务"); return; }
+        }
+        if (action.equals("list")) {
+            service.recoverInterrupted(loop.getSessionId());
+            service.store().list(loop.getSessionId()).forEach(t -> ui.displayInfo(
+                    t.taskId() + " " + t.status() + " " + t.objective()));
+            return;
+        }
+        if (runner.isRunning() && !Set.of("show", "checkpoints").contains(action))
+            throw new IllegalStateException("请先 /task pause 暂停当前任务");
+        if (action.equals("new")) {
+            if (parts.length < 3) throw new IllegalArgumentException("用法: /task new <目标>");
+            runner.submitNewTask(argument);
+            return;
+        }
+        if (argument == null) throw new IllegalArgumentException("请指定 taskId");
+        if (action.equals("resume")) { runner.resume(argument); return; }
+        if (action.equals("complete") || action.equals("cancel")) {
+            service.finish(argument, loop.getSessionId(), action.equals("complete")
+                    ? com.thoughtcoding.task.TaskStatus.SUCCEEDED : com.thoughtcoding.task.TaskStatus.CANCELLED,
+                    "USER_" + action.toUpperCase(java.util.Locale.ROOT));
+        } else if (action.equals("accept-workspace")) {
+            service.acceptWorkspace(argument, loop.getSessionId());
+        } else if (action.equals("resolve")) {
+            String[] args = argument.split("\\s+", 4);
+            if (args.length != 4 || !Set.of("done", "failed").contains(args[2]))
+                throw new IllegalArgumentException("用法: /task resolve <taskId> <invocationId> done|failed <核验证据>");
+            service.resolve(args[0], loop.getSessionId(), args[1], args[2].equals("done"), args[3]);
+        } else if (action.equals("checkpoints")) {
+            if (!service.store().load(argument).task().sessionId().equals(loop.getSessionId()))
+                throw new IllegalArgumentException("任务不属于当前会话");
+            ui.displayInfo(service.store().checkpoints(argument).toString());
+        } else if (action.equals("show")) {
+            var cp = service.store().load(argument);
+            if (!cp.task().sessionId().equals(loop.getSessionId())) throw new IllegalArgumentException("任务不属于当前会话");
+            ui.displayInfo(cp.task().toString());
+            ui.displayInfo("检查点版本: " + cp.task().version() + " 阶段: " + cp.phase());
+            for (String key : List.of("worktreeTaskId", "branch", "commit", "artifactStatus")) {
+                if (cp.metadata().containsKey(key)) ui.displayInfo(key + ": " + cp.metadata().get(key));
+            }
+            if (cp.task().parentTaskId() != null) {
+                ui.displayInfo("父任务: " + cp.task().parentTaskId() + "\n工作目录: " + cp.workspace());
+                cp.messages().stream().filter(m -> "assistant".equals(m.role()) && m.toolCalls() == null)
+                        .reduce((a, b) -> b).ifPresent(m -> ui.displayInfo(m.content()));
+            }
+            cp.invocations().stream().filter(i -> !i.finished()).forEach(i -> ui.displayInfo(
+                    i.invocationId() + " " + i.toolName() + " " + i.status()));
+        } else throw new IllegalArgumentException("/task list|new|show|pause|resume|complete|cancel|checkpoints|resolve|accept-workspace");
+    }
+
     private void cancelCurrentTurn(AgentTurnRunner runner, ThoughtCodingUI ui) {
         if (runner.cancelCurrent()) {
             ui.displayWarning("⏸️  正在取消当前任务...");
@@ -779,7 +889,7 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                                 !msg.getContent().trim().isEmpty())
                         .collect(Collectors.toList());
 
-                currentAgentLoop.loadHistory(filteredHistory);
+                currentAgentLoop.switchSession(latestSessionId, history);
                 currentSessionId = latestSessionId;
                 ui.displaySuccess("Continued from session: " + latestSessionId);
 
@@ -800,7 +910,7 @@ public class ThoughtCodingCommand implements Callable<Integer> {
         ThoughtCodingUI ui = context.getUi();
         try {
             List<ChatMessage> history = context.getSessionService().loadSession(sessionId);
-            currentAgentLoop.loadHistory(history);
+            currentAgentLoop.switchSession(sessionId, history);
             currentSessionId = sessionId;
             ui.displaySuccess("Loaded session: " + sessionId);
         } catch (Exception e) {
@@ -1001,6 +1111,9 @@ public class ThoughtCodingCommand implements Callable<Integer> {
                                                                 💬 对话命令：
                                                                   <消息>         发送消息给AI助手
                                                                   stop / 停止   停止当前的AI生成
+                                                                  /task list|show|new|pause|resume|complete|cancel  任务管理
+                                                                  /checkpoint list [taskId]  查看执行检查点
+                                                                  /task resolve <taskId> <invocationId> done|failed <证据>  核验不明结果
                                                                   /new          开始新会话
                                                                   /save <名称>  保存当前会话
                                                                   /list         查看所有会话
