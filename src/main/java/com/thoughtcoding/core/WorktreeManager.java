@@ -68,10 +68,36 @@ public final class WorktreeManager {
 
     /** 在隔离 worktree 中执行任务，并返回任务结论与可供合并的 Git 产物信息。 */
     public RunResult run(String label, Callable<String> action) {
+        return runManaged(label, record -> {
+            try { return action.call(); }
+            catch (Exception e) { throw new WorktreeException("子任务执行失败", e); }
+        }, false);
+    }
+
+    /** Durable tasks retain their directory so a paused run can resume against the same files. */
+    public RunResult runManaged(String label, java.util.function.Function<TaskRecord, String> action,
+                                boolean retainWorkspace) {
+        return runManaged(label, action, retainWorkspace, null);
+    }
+
+    public RunResult runDurable(String label, String durableTaskId, java.util.function.Function<TaskRecord, String> action) {
+        if (!durableTaskId.matches("[a-zA-Z0-9-]{1,80}")) throw new WorktreeException("非法任务 ID");
+        String id = "task-" + durableTaskId;
+        Repository repository = inspectRepository();
+        WorktreeRegistry registry = registry(repository);
+        boolean existing = registry.withLock(() -> registry.load().stream().anyMatch(t -> t.id().equals(id)));
+        if (existing) return resumeManaged(id, action);
+        if (Files.exists(registry.taskDirectory(id)))
+            throw new WorktreeException("发现未登记的任务 worktree，请先 /agents list 巡检: " + id);
+        return runManaged(label, action, true, id);
+    }
+
+    private RunResult runManaged(String label, java.util.function.Function<TaskRecord, String> action,
+                                 boolean retainWorkspace, String durableId) {
         Repository repository = inspectRepository();
         WorktreeRegistry registry = registry(repository);
 
-        String id = ID_TIME.format(LocalDateTime.now()) + "-"
+        String id = durableId != null ? durableId : ID_TIME.format(LocalDateTime.now()) + "-"
                 + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
         String branch = "thoughtcoding/subagent/" + id;
         Path worktreeRoot = registry.taskDirectory(id);
@@ -80,6 +106,7 @@ public final class WorktreeManager {
                 worktreeRoot.toString(), branch, repository.baseCommit(), null,
                 TaskStatus.RUNNING, now, now, "");
 
+        var executionLease = registry.executionLease(id);
         ACTIVE_TASKS.add(id);
         try {
             registry.withLock(() -> {
@@ -99,6 +126,7 @@ public final class WorktreeManager {
             });
         } catch (RuntimeException e) {
             ACTIVE_TASKS.remove(id);
+            executionLease.close();
             throw e;
         }
 
@@ -110,6 +138,7 @@ public final class WorktreeManager {
                         "worktree 中找不到原工作目录对应位置: " + scopedWorkspace);
             } finally {
                 ACTIVE_TASKS.remove(id);
+                executionLease.close();
             }
             throw new WorktreeException(outcome.summary());
         }
@@ -117,25 +146,63 @@ public final class WorktreeManager {
         String conclusion = null;
         Throwable failure = null;
         try (Sandbox.WorkspaceScope ignored = Sandbox.enterWorkspace(scopedWorkspace)) {
-            conclusion = action.call();
+            conclusion = action.apply(running);
         } catch (Throwable t) {
             failure = t;
         }
 
         Outcome outcome;
         try {
-            outcome = registry.withLock(() -> finish(repository, registry, running));
+            outcome = registry.withLock(() -> finish(repository, registry, running, retainWorkspace));
         } finally {
             ACTIVE_TASKS.remove(id);
+            executionLease.close();
         }
 
         if (failure != null) {
+            if (failure instanceof com.thoughtcoding.task.TaskPersistenceException persistence) throw persistence;
             if (failure instanceof Error error) throw error;
             if (failure instanceof InterruptedException) Thread.currentThread().interrupt();
             throw new WorktreeException("SubAgent 在隔离 worktree 中执行失败: "
                     + safeMessage(failure) + "\n\n" + outcome.summary(), failure);
         }
         return new RunResult(conclusion, outcome);
+    }
+
+    public RunResult resumeManaged(String taskId, java.util.function.Function<TaskRecord, String> action) {
+        Repository inspected = inspectRepository();
+        WorktreeRegistry registry = registry(inspected);
+        var executionLease = registry.executionLease(taskId);
+        if (!ACTIVE_TASKS.add(taskId)) { executionLease.close(); throw new WorktreeException("worktree 任务仍在运行"); }
+        try {
+            TaskRecord running = registry.withLock(() -> {
+                TaskRecord record = registry.load().stream().filter(t -> t.id().equals(taskId)).findFirst()
+                        .orElseThrow(() -> new WorktreeException("找不到 worktree 产物: " + taskId));
+                if (record.worktree() == null) throw new WorktreeException("worktree 已清理，无法原地恢复");
+                Path path = Path.of(record.worktree());
+                validateManagedPath(inspected.root(), path);
+                if (!Files.isDirectory(path)) throw new WorktreeException("worktree 目录已丢失");
+                if (!record.branch().equals(git(path, "symbolic-ref", "--short", "HEAD").trim()))
+                    throw new WorktreeException("worktree 分支已变化，请先核验");
+                TaskRecord updated = record.withStatus(TaskStatus.RUNNING, "恢复执行");
+                saveRecord(registry, updated);
+                return updated;
+            });
+            Repository repository = new Repository(inspected.root(), inspected.workspaceRelativePath(), running.baseCommit());
+            Path scoped = Path.of(running.worktree()).resolve(repository.workspaceRelativePath()).normalize();
+            String conclusion;
+            try (var scope = Sandbox.enterWorkspace(scoped)) {
+                conclusion = action.apply(running);
+            } catch (RuntimeException | Error e) {
+                registry.withLock(() -> finish(repository, registry, running, true));
+                throw e;
+            }
+            Outcome outcome = registry.withLock(() -> finish(repository, registry, running, true));
+            return new RunResult(conclusion, outcome);
+        } finally {
+            ACTIVE_TASKS.remove(taskId);
+            executionLease.close();
+        }
     }
 
     /** 启动巡检：prune Git 残留、导入旧版分支/worktree、标记异常中断和已合并任务。 */
@@ -217,7 +284,7 @@ public final class WorktreeManager {
                 continue;
             }
 
-            try {
+            try (var executionLease = registry.executionLease(record.id())) {
                 deleteArtifacts(repository, record);
                 records.removeIf(t -> t.id().equals(record.id()));
                 messages.add("已清理 " + record.id() + "（" + record.status() + "）");
@@ -291,6 +358,10 @@ public final class WorktreeManager {
     }
 
     private Outcome finish(Repository repository, WorktreeRegistry registry, TaskRecord running) {
+        return finish(repository, registry, running, false);
+    }
+
+    private Outcome finish(Repository repository, WorktreeRegistry registry, TaskRecord running, boolean retain) {
         Path worktreeRoot = Path.of(running.worktree());
         try {
             String status = git(worktreeRoot, "status", "--porcelain", "--untracked-files=all").trim();
@@ -304,6 +375,13 @@ public final class WorktreeManager {
             }
 
             String head = git(worktreeRoot, "rev-parse", "HEAD").trim();
+            if (retain) {
+                String files = git(worktreeRoot, "diff", "--name-status", repository.baseCommit() + ".." + head).trim();
+                String stat = git(worktreeRoot, "diff", "--stat", repository.baseCommit() + ".." + head).trim();
+                String note = "为任务恢复保留工作目录；验收后可通过 /agents cleanup 清理";
+                saveRecord(registry, running.update(worktreeRoot.toString(), head, TaskStatus.PRESERVED, note));
+                return Outcome.savedButPreserved(running.id(), running.branch(), head, worktreeRoot, files, stat, note);
+            }
             if (head.equals(repository.baseCommit())) {
                 removeWorktree(repository.root(), worktreeRoot);
                 if (branchExists(repository.root(), running.branch())) {
@@ -350,6 +428,11 @@ public final class WorktreeManager {
 
     private TaskRecord reconcile(Repository repository, TaskRecord record) {
         if (record.status() == TaskStatus.RUNNING && ACTIVE_TASKS.contains(record.id())) return record;
+        if (record.status() == TaskStatus.RUNNING) {
+            try (var lease = registry(repository).executionLease(record.id())) {
+                // Acquiring the OS lease proves there is no owner in another process.
+            } catch (IllegalStateException activeElsewhere) { return record; }
+        }
 
         boolean worktreeExists = record.worktree() != null && Files.isDirectory(Path.of(record.worktree()));
         boolean branchExists = record.branch() != null && branchExists(repository.root(), record.branch());

@@ -69,6 +69,19 @@ public class SubAgentTool extends BaseTool {
     @Override
     @SuppressWarnings("unchecked")
     public ToolResult execute(String input, com.thoughtcoding.core.CancelToken token) {
+        return execute(input, token, null);
+    }
+
+    @Override
+    public ToolResult execute(String input, com.thoughtcoding.core.CancelToken token,
+                              com.thoughtcoding.task.TaskService.Run parent) {
+        return execute(input, token, parent, null);
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public ToolResult execute(String input, com.thoughtcoding.core.CancelToken token,
+                              com.thoughtcoding.task.TaskService.Run parent, String invocationId) {
         long startTime = System.currentTimeMillis();
         try {
             Map<String, Object> params = MAPPER.readValue(input, Map.class);
@@ -89,6 +102,19 @@ public class SubAgentTool extends BaseTool {
 
             boolean background = Boolean.TRUE.equals(params.get("background"));
 
+            if (parent != null && context.getTaskService() != null) {
+                String id = context.getTaskService().createChild(parent, invocationId, prompt, description,
+                        background, context.getAppConfig().getAi().isSubagentWorktreeIsolation());
+                String session = parent.state().sessionId();
+                var runner = new com.thoughtcoding.core.DurableSubAgentRunner(context);
+                if (background) {
+                    context.getSubAgentExecutor().startDurableBackground(id, description,
+                            taskToken -> runner.run(id, session, taskToken));
+                    return success("后台子任务已登记: " + id + "，结论将在后续对话注入。", System.currentTimeMillis() - startTime);
+                }
+                return success(runner.run(id, session, token), System.currentTimeMillis() - startTime);
+            }
+
             if (background) {
                 // 后台模式：任务用【自己的】token（跨回合存活，不随本回合取消），
                 // 由 SubAgentExecutor 统一管理生命周期与结论注入。
@@ -107,6 +133,8 @@ public class SubAgentTool extends BaseTool {
                     conclusion == null || conclusion.isBlank()
                             ? "子Agent已结束，但未产出文本结论。" : conclusion,
                     System.currentTimeMillis() - startTime);
+        } catch (com.thoughtcoding.task.TaskPersistenceException e) {
+            throw e;
         } catch (com.thoughtcoding.core.CancelledException e) {
             return error("子Agent已被用户取消", System.currentTimeMillis() - startTime);
         } catch (Exception e) {

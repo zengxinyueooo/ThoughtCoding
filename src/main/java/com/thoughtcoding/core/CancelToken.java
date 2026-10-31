@@ -21,6 +21,7 @@ import java.util.List;
 public class CancelToken {
 
     private volatile boolean cancelled = false;
+    private volatile boolean pauseRequested;
     private final List<Runnable> actions = new ArrayList<>();
 
     /** 已取消返回 true。检查点逻辑请用 {@link #check()}。 */
@@ -30,12 +31,24 @@ public class CancelToken {
 
     /** 取消本回合。幂等：仅第一次调用触发回调。 */
     public void cancel() {
+        stop(false);
+    }
+
+    /** Pause uses the same cancellation propagation, retaining a resumable task lifecycle. */
+    public void pause() {
+        stop(true);
+    }
+
+    public boolean isPauseRequested() { return pauseRequested; }
+
+    private void stop(boolean pause) {
         List<Runnable> toRun;
         synchronized (this) {
             if (cancelled) {
                 return;
             }
             cancelled = true;
+            pauseRequested = pause;
             toRun = List.copyOf(actions);
             actions.clear();
         }

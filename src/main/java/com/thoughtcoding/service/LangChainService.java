@@ -111,7 +111,7 @@ public class LangChainService implements AIService {
 
         // 取消传播：token 触发时提前完成 future，让下面的 get() 立即返回。
         // 已知限制：langchain4j 不暴露底层 okhttp 调用的取消，HTTP 流由 SDK 自然收尾；
-        // 迟到的 onCompleteResponse 仍可能往 history 追加消息（无害，仅本轮不使用）。
+        // 请求包装器丢弃等待结束后的迟到回调，避免污染恢复历史。
         if (token != null) {
             token.onCancel(() -> completionFuture.complete(null));
         }
@@ -127,20 +127,19 @@ public class LangChainService implements AIService {
             try {
                 completionFuture.get(5, TimeUnit.MINUTES);
             } catch (java.util.concurrent.TimeoutException e) {
-                System.err.println("⚠️  流式响应超时");
                 completionFuture.cancel(true);
+                throw new IllegalStateException("流式响应超时", e);
             } catch (Exception e) {
-                System.err.println("⚠️  等待流式响应时发生错误: " + e.getMessage());
+                completionFuture.cancel(true);
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+                throw new IllegalStateException("等待流式响应失败", e);
             }
 
         } catch (Exception e) {
             isGenerating = false;
             shouldStop = false;
             System.err.println("❌ Service error: " + e.getMessage());
-            ChatMessage errorMessage = new ChatMessage("assistant",
-                    "服务暂时不可用，请稍后重试。错误信息: " + e.getMessage());
-            messageHandler.accept(errorMessage);
-            history.add(errorMessage);
+            throw new IllegalStateException("服务暂时不可用: " + e.getMessage(), e);
         }
 
         return history;
@@ -164,7 +163,7 @@ public class LangChainService implements AIService {
         }
         dev.langchain4j.model.chat.request.ChatRequest request = reqBuilder.build();
 
-        streamingChatModel.chat(request, new RetryingStreamHandler(request, history, completionFuture, token));
+        guardedStream(request, new RetryingStreamHandler(request, history, completionFuture, token), token, completionFuture);
     }
 
     /**
@@ -265,7 +264,7 @@ public class LangChainService implements AIService {
                     return;
                 }
                 try {
-                    streamingChatModel.chat(request, this);
+                    guardedStream(request, this, token, completionFuture);
                 } catch (Exception e) {
                     failThrough(e);
                 }
@@ -293,6 +292,31 @@ public class LangChainService implements AIService {
                 shouldStop = false;
                 completionFuture.completeExceptionally(error);
             }
+        }
+    }
+
+    /** Shared request boundary for initial streaming calls and application retries. */
+    private void guardedStream(dev.langchain4j.model.chat.request.ChatRequest request,
+                                StreamingChatResponseHandler handler,
+                                com.thoughtcoding.core.CancelToken token,
+                                CompletableFuture<?> future) {
+        if (future.isDone() || (token != null && token.isCancelled())) return;
+        var terminal = new java.util.concurrent.atomic.AtomicBoolean();
+        future.whenComplete((result, error) -> terminal.set(true));
+        try {
+            streamingChatModel.chat(request, new StreamingChatResponseHandler() {
+                @Override public void onPartialResponse(String text) {
+                    if (!terminal.get() && (token == null || !token.isCancelled())) handler.onPartialResponse(text);
+                }
+                @Override public void onCompleteResponse(dev.langchain4j.model.chat.response.ChatResponse response) {
+                    if (terminal.compareAndSet(false, true) && (token == null || !token.isCancelled())) handler.onCompleteResponse(response);
+                }
+                @Override public void onError(Throwable error) {
+                    if (terminal.compareAndSet(false, true)) handler.onError(error);
+                }
+            });
+        } catch (RuntimeException error) {
+            if (terminal.compareAndSet(false, true)) handler.onError(error);
         }
     }
 
@@ -370,7 +394,7 @@ public class LangChainService implements AIService {
                                             java.util.function.Consumer<String> tokenSink,
                                             com.thoughtcoding.core.CancelToken token) {
         if (streamingChatModel == null) {
-            return new SubagentTurn("(子Agent不可用：模型未初始化)", java.util.Collections.emptyList());
+            return SubagentTurn.failure("(子Agent不可用：模型未初始化)");
         }
 
         // 组装消息：子Agent系统提示 + 子Agent自己的历史（不走 getContextForAI 压缩，生命周期短）
@@ -408,7 +432,7 @@ public class LangChainService implements AIService {
         }
         // 限流/瞬时错误重试：并行子代理更容易触发 TPM 限流，退避重发同一请求（对调用方透明）
         final int[] subAttempts = {0};
-        streamingChatModel.chat(request, new StreamingChatResponseHandler() {
+        guardedStream(request, new StreamingChatResponseHandler() {
             @Override
             public void onPartialResponse(String partial) {
                 if (token != null && token.isCancelled()) {
@@ -458,23 +482,24 @@ public class LangChainService implements AIService {
                     if (future.isDone() || (token != null && token.isCancelled())) {
                         return; // 退避期间已取消/完成
                     }
-                    streamingChatModel.chat(request, this);
+                    guardedStream(request, this, token, future);
                 }, delayMs, TimeUnit.MILLISECONDS);
             }
-        });
+        }, token, future);
 
         // 异常全包：绝不抛出（ToolDispatcher/SubAgent 依赖这一点保持工具配对不被破坏）
         try {
             return future.get(5, TimeUnit.MINUTES);
         } catch (java.util.concurrent.TimeoutException e) {
             future.cancel(true);
-            return new SubagentTurn("(子Agent调用超时)", java.util.Collections.emptyList());
+            return SubagentTurn.failure("(子Agent调用超时)");
         } catch (java.util.concurrent.CancellationException e) {
-            return new SubagentTurn("(子Agent调用已被用户取消)", java.util.Collections.emptyList());
+            return SubagentTurn.failure("(子Agent调用已被用户取消)");
         } catch (Exception e) {
+            future.cancel(true);
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             Throwable cause = e.getCause() != null ? e.getCause() : e;
-            return new SubagentTurn("(子Agent调用失败: " + cause.getMessage() + ")",
-                    java.util.Collections.emptyList());
+            return SubagentTurn.failure("(子Agent调用失败: " + cause.getMessage() + ")");
         }
     }
 

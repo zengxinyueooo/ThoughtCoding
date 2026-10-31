@@ -75,9 +75,10 @@ public class SubAgentExecutor {
      * 调用方（AgentLoop）自行决定等待一个还是一批。
      */
     public <T> Future<T> submitForeground(Callable<T> task) {
+        var workspace = com.thoughtcoding.security.Sandbox.workspaceRoot();
         return executor.submit(() -> {
             permits.acquire();
-            try {
+            try (var scope = com.thoughtcoding.security.Sandbox.enterWorkspace(workspace)) {
                 return task.call();
             } finally {
                 permits.release();
@@ -91,35 +92,49 @@ public class SubAgentExecutor {
      */
     public BackgroundTask startBackground(String label, java.util.function.Function<CancelToken, String> task) {
         String id = "subagent-" + idSeq.incrementAndGet();
+        return startBackground(id, label, task, false);
+    }
+
+    public BackgroundTask startDurableBackground(String id, String label, java.util.function.Function<CancelToken, String> task) {
+        return startBackground(id, label, task, true);
+    }
+
+    private BackgroundTask startBackground(String id, String label, java.util.function.Function<CancelToken, String> task,
+                                           boolean durable) {
         CancelToken token = new CancelToken();
         BackgroundTask t = new BackgroundTask(id, label, token);
-        tasks.put(id, t);
+        if (tasks.putIfAbsent(id, t) != null) throw new IllegalStateException("子任务已在调度器中: " + id);
+        var workspace = com.thoughtcoding.security.Sandbox.workspaceRoot();
 
-        executor.submit(() -> {
+        Runnable backgroundTask = () -> {
             try {
                 permits.acquire();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 t.conclusion = "后台子代理被中断";
                 t.status = BackgroundTask.Status.FAILED;
-                completedResults.add(t);
+                if (!durable) completedResults.add(t);
                 return;
             }
-            try {
+            try (var scope = com.thoughtcoding.security.Sandbox.enterWorkspace(workspace)) {
                 String conclusion = task.apply(token);
                 t.conclusion = conclusion == null ? "" : conclusion;
                 t.status = BackgroundTask.Status.DONE;
-                completedResults.add(t);
+                if (!durable) completedResults.add(t);
                 notifyDone(t);
             } catch (Exception e) {
                 t.conclusion = "后台子代理失败: " + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
                 t.status = BackgroundTask.Status.FAILED;
-                completedResults.add(t);
+                if (!durable) completedResults.add(t);
                 notifyDone(t);
             } finally {
                 permits.release();
             }
-        });
+        };
+        try { executor.submit(backgroundTask); }
+        catch (RuntimeException error) {
+            tasks.remove(id); throw error;
+        }
         return t;
     }
 
@@ -140,10 +155,17 @@ public class SubAgentExecutor {
         return new ArrayList<>(tasks.values());
     }
 
+    public boolean stop(String id, boolean pause) {
+        BackgroundTask task = tasks.get(id);
+        if (task == null || task.status() != BackgroundTask.Status.RUNNING) return false;
+        if (pause) task.token().pause(); else task.token().cancel();
+        return true;
+    }
+
     /** 退出时统一取消所有后台任务并停掉调度器。 */
     public void shutdown() {
         for (BackgroundTask t : tasks.values()) {
-            t.token().cancel();
+            t.token().pause();
         }
         executor.shutdownNow();
     }

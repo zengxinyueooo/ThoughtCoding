@@ -49,99 +49,103 @@ public class SubAgent {
      * @return SubAgent的最终结论文本（唯一回传给主Agent的内容）
      */
     public String run(String subAgentPrompt, String label, CancelToken token) {
+        return run(subAgentPrompt, label, token, null);
+    }
+
+    public String run(String prompt, String label, CancelToken token,
+                      com.thoughtcoding.task.TaskService.Run task) {
+        return execute(prompt, label, token, task, false);
+    }
+
+    public String resume(String label, CancelToken token, com.thoughtcoding.task.TaskService.Run task) {
+        return execute(task.state().objective(), label, token, task, true);
+    }
+
+    private String execute(String prompt, String label, CancelToken token,
+                           com.thoughtcoding.task.TaskService.Run task, boolean resume) {
         ThoughtCodingUI ui = context.getUi();
         ObjectMapper mapper = new ObjectMapper();
-
-        printLine(ui, "[SubAgent] 开始: " + oneLine(label, 80));
-
-        // 全新隔离历史：SubAgent看不到主对话，任务信息全在 subAgentPrompt 里
-        List<ChatMessage> subHistory = new ArrayList<>();
-        subHistory.add(new ChatMessage("user", subAgentPrompt));
-
-        // SubAgent自己的权限栈（共享 UI；auto-approve 默认 false —— 更安全的方向）。
-        // ownerLabel 让并发子代理的确认框能区分来源。
-        ToolExecutionConfirmation confirmation =
-                new ToolExecutionConfirmation(ui, ui.getLineReader(), "[SubAgent " + label + "]",
-                        context::getConsoleInputRouter);
-        HookRegistry hookRegistry = context.getHookRegistry().copy();
-        hookRegistry.registerFirst(HookType.PRE_TOOL_USE, new PermissionHook(confirmation));
-        // 每任务独立的重复调用防护（新实例天然隔离，无需 reset）
-        hookRegistry.registerFirst(HookType.PRE_TOOL_USE, new DuplicateToolCallGuard());
-        ToolExecutionPipeline toolPipeline = new ToolExecutionPipeline(
-                context, hookRegistry, context.getToolRegistry());
-
-        String subPrompt = context.getContextManager().buildSubagentSystemPrompt();
-
-        int maxIter = 30;
-
-        String lastText = "";
-
-        for (int iter = 0; iter < maxIter; iter++) {
-            if (token != null && token.isCancelled()) {
-                printLine(ui, "[SubAgent] 已被用户取消");
-                return "子Agent已被用户取消，未产出结论。";
+        List<ChatMessage> history = new ArrayList<>();
+        if (resume) task.checkpoint().messages().forEach(m -> history.add(m.toChatMessage()));
+        else history.add(new ChatMessage("user", prompt));
+        int total = task == null ? 0 : task.checkpoint().iterations();
+        boolean pendingBatch = resume && task.checkpoint().phase() == com.thoughtcoding.task.ExecutionCheckpoint.Phase.TOOLS;
+        if (resume && task.checkpoint().phase() == com.thoughtcoding.task.ExecutionCheckpoint.Phase.FINISHED) {
+            task.status(com.thoughtcoding.task.TaskStatus.WAITING_INPUT, "RESPONSE_COMPLETE");
+            return finalText(history);
+        }
+        if (pendingBatch) com.thoughtcoding.task.RecoveryHistory.removeCurrentBatchResults(history, task.checkpoint());
+        ToolExecutionConfirmation confirmation = new ToolExecutionConfirmation(ui, ui.getLineReader(),
+                "[SubAgent " + label + "]", context::getConsoleInputRouter);
+        HookRegistry hooks = context.getHookRegistry().copy();
+        hooks.registerFirst(HookType.PRE_TOOL_USE, new PermissionHook(confirmation));
+        hooks.registerFirst(HookType.PRE_TOOL_USE, new DuplicateToolCallGuard());
+        ToolExecutionPipeline pipeline = new ToolExecutionPipeline(context, hooks, context.getToolRegistry(), task);
+        String systemPrompt = context.getContextManager().buildSubagentSystemPrompt();
+        for (int iteration = 0; iteration < 30; iteration++) {
+            if (token != null && token.isCancelled()) return stop(task, token);
+            List<ToolCall> calls;
+            if (pendingBatch) {
+                calls = task.checkpoint().batch().stream().map(task::invocation)
+                        .map(com.thoughtcoding.task.ExecutionCheckpoint.Invocation::toToolCall).toList();
+                pendingBatch = false;
+            } else {
+                if (task != null) task.boundary(com.thoughtcoding.task.ExecutionCheckpoint.Phase.BEFORE_MODEL,
+                        history, total, 0, false);
+                // Task state is request-local and is counted by the existing context budget pipeline.
+                List<ChatMessage> request = new ArrayList<>(history);
+                if (task != null) request.add(new ChatMessage("user", task.modelSummary()));
+                StringBuilder lineBuffer = new StringBuilder();
+                SubagentTurn turn = context.getAiService().chatOnceForSubagent(systemPrompt, request,
+                        text -> { lineBuffer.append(text); emitCompletedLines(ui, lineBuffer); }, token);
+                if (!lineBuffer.isEmpty()) printLine(ui, lineBuffer.toString());
+                if (token != null && token.isCancelled()) return stop(task, token);
+                if (turn.isFailed()) {
+                    if (task != null) task.status(com.thoughtcoding.task.TaskStatus.FAILED, turn.getText());
+                    return turn.getText();
+                }
+                if (!turn.hasToolCalls()) {
+                    history.add(new ChatMessage("assistant", turn.getText()));
+                    if (task != null) {
+                        task.boundary(com.thoughtcoding.task.ExecutionCheckpoint.Phase.FINISHED, history, total, 0, false);
+                        task.status(com.thoughtcoding.task.TaskStatus.WAITING_INPUT, "RESPONSE_COMPLETE");
+                    }
+                    return turn.getText();
+                }
+                history.add(ChatMessage.assistantWithToolCalls(turn.getText(), turn.getToolCalls()));
+                calls = turn.getToolCalls().stream().map(ref -> new ToolCall(ref.getName(),
+                        parseArgs(mapper, ref.getArguments()), null, false, 0, false, ref.getId())).toList();
+                if (task != null) task.prepare(calls, history);
             }
-            // 每轮首个 token 前打一个 [SubAgent] 前缀，其余 token 原样流式打印。
-            // token 是半行片段而 printAbove 只能整行上屏，先攒进行缓冲、见换行才打印；
-            // 缓冲为本 SubAgent 私有，并行子代理之间互不串行污染。
-            final StringBuilder streamLineBuffer = new StringBuilder();
-            final boolean[] headerPrinted = {false};
-            SubagentTurn turn = context.getAiService().chatOnceForSubagent(
-                    subPrompt, subHistory,
-                    t -> {
-                        if (!headerPrinted[0]) {
-                            streamLineBuffer.append("\n[SubAgent] ");
-                            headerPrinted[0] = true;
-                        }
-                        streamLineBuffer.append(t);
-                        emitCompletedLines(ui, streamLineBuffer);
-                    }, token);
-            if (headerPrinted[0] && streamLineBuffer.length() > 0) {
-                // 残余半行上屏（printAbove 会自动补换行收尾）
-                ui.printAbove(streamLineBuffer.toString());
-                streamLineBuffer.setLength(0);
-            }
-
-            lastText = turn.getText();
-
-            // 无工具调用 → 本轮即最终结论
-            if (!turn.hasToolCalls()) {
-                printLine(ui, "[SubAgent] 结束");
-                return lastText;
-            }
-
-            // 记录携带工具调用的 assistant 消息（供下一轮重建 AiMessage.toolExecutionRequests）
-            subHistory.add(ChatMessage.assistantWithToolCalls(turn.getText(), turn.getToolCalls()));
-
-            // 逐个执行 —— 关键不变量：每个工具调用必须严格配对恰好一个 tool 结果，
-            // 否则SubAgent绕过了主链路的 sanitizeToolPairs，下一轮会 400。
-            for (ToolCallRef ref : turn.getToolCalls()) {
-                String id = ref.getId();
-                String name = ref.getName();
-
-                Map<String, Object> params = parseArgs(mapper, ref.getArguments());
-                ToolCall call = new ToolCall(name, params, null, false, 0, false, id);
-
-                printLine(ui, "[SubAgent] 调用 " + name + argSummary(params));
-
-                ToolExecutionPipeline.Outcome outcome =
-                        toolPipeline.executeAndRecord(call, token, subHistory);
-                ToolResult result = outcome.result();
-                if (outcome.isBlocked()) {
-                    printLine(ui, "[SubAgent] 结果: 已阻止 —— "
-                            + oneLine(result.getError(), 80));
-                } else {
-                    printLine(ui, "[SubAgent] 结果: " + (result.isSuccess()
-                            ? "成功" : ("失败 —— " + oneLine(result.getError(), 80))));
+            for (ToolCall call : calls) {
+                if (token != null && token.isCancelled()) return stop(task, token);
+                pipeline.executeAndRecord(call, token, history);
+                if (task != null) {
+                    task.boundary(com.thoughtcoding.task.ExecutionCheckpoint.Phase.TOOLS, history, total, 0, false);
+                    if (task.hasUnknown()) {
+                        if (token != null && token.isCancelled()) return stop(task, token);
+                        task.status(com.thoughtcoding.task.TaskStatus.WAITING_INPUT, "UNKNOWN_TOOL_RESULT");
+                        return "工具结果不明，需要核验。任务 ID: " + task.state().taskId();
+                    }
                 }
             }
+            total++;
+            if (task != null) task.boundary(com.thoughtcoding.task.ExecutionCheckpoint.Phase.BEFORE_MODEL,
+                    history, total, 0, false);
         }
+        if (task != null) task.status(com.thoughtcoding.task.TaskStatus.PAUSED, "ITERATION_LIMIT");
+        return "SubAgent 已达到工具轮次上限，使用 /task resume 继续。";
+    }
 
-        // 达到最大轮次：给出兜底结论，避免返回空串
-        printLine(ui, "[SubAgent] 已达最大工具轮次(" + maxIter + ")，停止。");
-        return (lastText == null || lastText.isBlank())
-                ? "SubAgent已达最大工具轮次(" + maxIter + ")，未产出最终结论。"
-                : lastText;
+    private static String finalText(List<ChatMessage> history) {
+        return history.stream().filter(m -> m.isAssistantMessage() && !m.hasToolCalls())
+                .map(ChatMessage::getContent).filter(java.util.Objects::nonNull).reduce((a, b) -> b).orElse("");
+    }
+
+    private static String stop(com.thoughtcoding.task.TaskService.Run task, CancelToken token) {
+        if (task != null) task.status(token.isPauseRequested() ? com.thoughtcoding.task.TaskStatus.PAUSED
+                : com.thoughtcoding.task.TaskStatus.CANCELLED, "USER_STOPPED");
+        return "子任务已停止。";
     }
 
     // ── 显示辅助（纯文本、无装饰 emoji）──

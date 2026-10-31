@@ -28,6 +28,7 @@ public class AgentTurnRunner {
     private final ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
     private final AtomicReference<CurrentTurn> current = new AtomicReference<>();
     private final ConsoleInputRouter inputRouter;
+    private volatile String submittedTaskId;
 
     public AgentTurnRunner(AgentLoop agentLoop, ThoughtCodingContext context) {
         this.agentLoop = agentLoop;
@@ -46,14 +47,36 @@ public class AgentTurnRunner {
      * 提交一个回合。回合运行中调用返回 false（调用方提示用户先 stop）。
      */
     public boolean submit(String input) {
+        return submit(token -> agentLoop.processInput(input, token));
+    }
+
+    public boolean submitNewTask(String input) {
+        return submit(token -> agentLoop.processNewTask(input, token));
+    }
+
+    public boolean resume(String taskId) {
+        return submit(token -> agentLoop.resumeTask(taskId, token), taskId);
+    }
+
+    private boolean submit(java.util.function.Consumer<CancelToken> action) { return submit(action, null); }
+
+    public String getCurrentTaskId() { return submittedTaskId != null ? submittedTaskId : agentLoop.getActiveTaskId(); }
+
+    private synchronized boolean submit(java.util.function.Consumer<CancelToken> action, String taskId) {
         CurrentTurn turn = current.get();
         if (turn != null && !turn.future().isDone()) {
             return false;
         }
 
         CancelToken token = new CancelToken();
-        Future<?> future = executor.submit(() -> agentLoop.processInput(input, token));
+        submittedTaskId = taskId;
+        java.util.concurrent.FutureTask<Void> future = new java.util.concurrent.FutureTask<>(() -> {
+            action.accept(token);
+            return null;
+        });
         current.set(new CurrentTurn(token, future));
+        try { executor.execute(future); }
+        catch (RuntimeException e) { current.set(null); throw e; }
         return true;
     }
 
@@ -71,6 +94,14 @@ public class AgentTurnRunner {
         return false;
     }
 
+    public boolean pauseCurrent() {
+        CurrentTurn turn = current.get();
+        if (turn == null || turn.future().isDone()) return false;
+        turn.token().pause();
+        inputRouter.cancelPending();
+        return true;
+    }
+
     /** 等待当前回合结束（测试/退出前用）。 */
     public void awaitIdle() {
         CurrentTurn turn = current.get();
@@ -85,7 +116,7 @@ public class AgentTurnRunner {
 
     /** 退出时：取消运行中的回合并关闭线程池。 */
     public void shutdown() {
-        cancelCurrent();
+        pauseCurrent();
         inputRouter.cancelPending();
         executor.shutdownNow();
     }

@@ -11,6 +11,10 @@ import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.model.ToolResult;
 import com.thoughtcoding.service.PerformanceMonitor;
 import com.thoughtcoding.security.PermissionHook;
+import com.thoughtcoding.task.TaskService;
+import com.thoughtcoding.task.TaskStatus;
+import com.thoughtcoding.task.ExecutionCheckpoint;
+import com.thoughtcoding.task.ExecutionCheckpoint.Phase;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -59,7 +63,7 @@ public class AgentLoop {
 
     private final ThoughtCodingContext context;
     private final List<ChatMessage> history;
-    private final String sessionId;
+    private String sessionId;
     private final String modelName;
     private final ToolExecutionConfirmation confirmation;  // 交互式确认组件
     private final ToolExecutionPipeline toolPipeline;
@@ -68,6 +72,8 @@ public class AgentLoop {
 
     // 缓存本轮模型请求的工具调用（原生路径一轮可能有多个）
     private final List<ToolCall> pendingToolCalls = new ArrayList<>();
+    private volatile String activeTaskId;
+    private boolean executionFailed;
 
     public AgentLoop(ThoughtCodingContext context, String sessionId, String modelName) {
         this.context = context;
@@ -97,7 +103,7 @@ public class AgentLoop {
         // 供 /rewind 恢复。快照失败 fail-open，不卡编辑。
         if (context.getCheckpointStore() != null) {
             this.hookRegistry.register(com.thoughtcoding.hook.HookType.PRE_TOOL_USE,
-                    new com.thoughtcoding.hook.CheckpointHook(context.getCheckpointStore(), sessionId));
+                    hook -> new com.thoughtcoding.hook.CheckpointHook(context.getCheckpointStore(), this.sessionId).execute(hook));
         }
         this.toolPipeline = new ToolExecutionPipeline(
                 context, this.hookRegistry, context.getToolRegistry());
@@ -111,6 +117,16 @@ public class AgentLoop {
         if (previousHistory != null) {
             history.addAll(previousHistory);
         }
+    }
+
+    /** Called only by the idle REPL. A session switch must replace identity and history together. */
+    public void switchSession(String sessionId, List<ChatMessage> previousHistory) {
+        this.sessionId = java.util.Objects.requireNonNull(sessionId);
+        history.clear();
+        loadHistory(previousHistory);
+        activeTaskId = null;
+        pendingToolCalls.clear();
+        duplicateCallGuard.reset();
     }
 
     /**
@@ -136,27 +152,110 @@ public class AgentLoop {
      * @param token 本回合的取消令牌（由 AgentTurnRunner 创建；单次提问模式传入独立令牌）
      */
     public void processInput(String input, CancelToken token) {
+        processTask(input, token, null, false, false);
+    }
+
+    public void processNewTask(String input, CancelToken token) {
+        processTask(input, token, null, false, true);
+    }
+
+    public boolean resumeTask(String taskId, CancelToken token) {
+        try {
+            if (context.getTaskService() != null) {
+                var cp = context.getTaskService().store().load(taskId);
+                if (cp.task().parentTaskId() != null) {
+                    try {
+                        context.getUi().displayInfo(new DurableSubAgentRunner(context).run(taskId, sessionId, token));
+                    } catch (Exception e) {
+                        context.getUi().displayError("子任务恢复失败: " + e.getMessage());
+                        return false;
+                    }
+                    return true;
+                }
+            }
+            processTask(null, token, taskId, true, false);
+            return !executionFailed;
+        } catch (Exception e) {
+            context.getUi().displayError("任务恢复失败: " + e.getMessage());
+            return false;
+        }
+    }
+
+    public String getActiveTaskId() { return activeTaskId; }
+
+    private void processTask(String input, CancelToken token, String requestedTaskId, boolean resume, boolean newTask) {
+        executionFailed = false;
         PerformanceMonitor monitor = context.getPerformanceMonitor();
         monitor.start();
-
+        TaskService.Run task = null;
+        com.thoughtcoding.task.TaskStore.Lease sessionLease = null;
         try {
+            TaskService tasks = context.getTaskService();
+            if (tasks != null) {
+                sessionLease = tasks.lockSession(sessionId);
+                tasks.recoverInterrupted(sessionId);
+                var newestRoot = tasks.store().list(sessionId).stream().filter(t -> t.parentTaskId() == null)
+                        .max(java.util.Comparator.comparing(com.thoughtcoding.task.TaskState::createdAt)).orElse(null);
+                if (newestRoot != null) {
+                    var latestHistory = tasks.store().load(newestRoot.taskId()).messages();
+                    if (latestHistory.size() > history.size()
+                            && com.thoughtcoding.task.RecoveryHistory.isPrefix(history, latestHistory)) {
+                        history.clear();
+                        latestHistory.forEach(m -> history.add(m.toChatMessage()));
+                    }
+                }
+                String taskId = requestedTaskId;
+                if (!resume && !newTask) {
+                    var latest = tasks.store().list(sessionId).stream().filter(t -> t.parentTaskId() == null)
+                            .max(java.util.Comparator.comparing(com.thoughtcoding.task.TaskState::createdAt)).orElse(null);
+                    taskId = latest == null || latest.status().terminal() ? null : latest.taskId();
+                }
+                if (taskId == null) taskId = tasks.create(sessionId, null, input, history);
+                ExecutionCheckpoint saved = tasks.store().load(taskId);
+                if (!resume && saved.phase() == Phase.TOOLS) {
+                    throw new IllegalStateException("有尚未完成的工具批次，请先 /task resume " + taskId);
+                }
+                if (resume) {
+                    if (!com.thoughtcoding.task.RecoveryHistory.isPrefix(history, saved.messages())) {
+                        throw new IllegalStateException("会话已有较新的消息；请在原会话恢复该任务，避免覆盖对话");
+                    }
+                }
+                task = tasks.open(taskId, sessionId, resume);
+                if (!resume) task.metadata(Map.of("planMode", Boolean.toString(com.thoughtcoding.security.PlanMode.isActive()),
+                        "modelName", modelName));
+                activeTaskId = taskId;
+                if (resume || (saved.messages().size() > history.size()
+                        && com.thoughtcoding.task.RecoveryHistory.isPrefix(history, saved.messages()))) {
+                    history.clear();
+                    saved.messages().forEach(m -> history.add(m.toChatMessage()));
+                }
+            } else if (resume) {
+                throw new IllegalStateException("任务持久化服务未启用");
+            }
             pendingToolCalls.clear();
             duplicateCallGuard.reset();   // 每轮用户对话重置重复调用记忆，跨轮的相同首调不误拦
 
             // ── Hook: UserPromptSubmit（进入 LLM 前）—— BLOCK 则跳过本轮 ──
-            HookContext promptContext = HookContext.forUserPrompt(context, history, input);
+            HookContext promptContext = HookContext.forUserPrompt(context, history,
+                    resume ? task.state().objective() : input);
             HookResult promptResult = hookRegistry.fire(promptContext);
             if (promptResult.isBlocked()) {
+                if (task != null) task.status(TaskStatus.WAITING_INPUT, "PROMPT_BLOCKED");
                 context.getUi().displayWarning(promptResult.message() != null
                         ? promptResult.message() : "本轮输入已被 Hook 阻止。");
                 return;
             }
 
             // 后台子代理结论注入：在用户新输入之前插入，让模型先看到已完成任务的结论
-            injectCompletedBackgroundTasks();
+            if (!resume) injectCompletedBackgroundTasks();
 
             String modelPrompt = promptContext.buildPromptForModel();
-            history.add(new ChatMessage("user", modelPrompt));
+            if (!resume) {
+                history.add(new ChatMessage("user", modelPrompt));
+                if (task != null) task.boundary(Phase.BEFORE_MODEL, history,
+                        task.checkpoint().iterations(), 0, false);
+            }
+            if (task != null && task.checkpoint().phase() != Phase.TOOLS) task.receiveResults(history);
 
             // ── 记忆：本轮开始前 LLM 召回相关记忆；正文沿调用链请求局部传递（同 CancelToken 模式），
             // 不落 ContextManager 共享字段，避免并行/后台回合互相串写 ──
@@ -164,7 +263,8 @@ public class AgentLoop {
             String recalledMemories = memory != null ? memory.recall(history) : null;
 
             // 原生 function calling：多轮 agentic 循环
-            runNativeToolLoop(token, recalledMemories);
+            RunOutcome outcome = runNativeToolLoop(token, recalledMemories, task, resume);
+            if (task != null) task.status(outcome.status(), outcome.reason());
 
             // ── 记忆：按信号门控储存（省掉每轮空转的抽取调用），整理(dream)后台异步 ──
             // 触发条件二选一：主模型在本轮输出过 <memory-signal/> 标记，或用户输入含明确的记忆诉求词。
@@ -179,10 +279,25 @@ public class AgentLoop {
                 }
             }
 
+            if (task != null) {
+                var cp = task.checkpoint();
+                task.boundary(cp.phase(), history, cp.iterations(), cp.stopContinuations(), cp.completionNudge());
+            }
             context.getSessionService().saveSession(sessionId, history);
         } catch (Exception e) {
+            executionFailed = true;
             context.getUi().displayError("Error processing input: " + e.getMessage());
+            if (task != null) {
+                try { task.status(TaskStatus.FAILED, e.getMessage()); }
+                catch (Exception persistenceError) {
+                    context.getUi().displayError("任务状态未能落盘；保留上一个恢复点: " + persistenceError.getMessage());
+                }
+                history.clear();
+                task.checkpoint().messages().forEach(m -> history.add(m.toChatMessage()));
+            }
         } finally {
+            if (task != null) task.close();
+            if (sessionLease != null) sessionLease.close();
             // 异常中断也要把流式残余上屏，避免残留片段混入下一回合输出
             context.getUi().flushAssistantStream();
             monitor.stop();
@@ -218,63 +333,102 @@ public class AgentLoop {
      * 补「用户已取消」配对结果，循环退出——保证 history 中的工具调用/结果
      * 严格配对（违反会导致模型 400）。
      */
-    private void runNativeToolLoop(CancelToken token, String recalledMemories) {
+    private record RunOutcome(TaskStatus status, String reason) { }
+
+    private static RunOutcome stopped(CancelToken token) {
+        return new RunOutcome(token.isPauseRequested() ? TaskStatus.PAUSED : TaskStatus.CANCELLED,
+                token.isPauseRequested() ? "USER_PAUSED" : "USER_CANCELLED");
+    }
+
+    private RunOutcome runNativeToolLoop(CancelToken token, String recalledMemories,
+                                         TaskService.Run task, boolean resume) {
         AppConfig.AIConfig ai = context.getAppConfig().getAi();
         int maxIter = ai != null ? ai.getMaxToolIterations() : 10;
         boolean auto = ai == null || ai.isAutoProcessToolResults();
         int iter = 0;
-        int stopContinuations = 0;
-        boolean completionNudgePending = false;
+        int totalIterations = task == null ? 0 : task.checkpoint().iterations();
+        int stopContinuations = task == null || !resume ? 0 : task.checkpoint().stopContinuations();
+        boolean completionNudgePending = task != null && resume && task.checkpoint().completionNudge();
+        ToolExecutionPipeline pipeline = task == null ? toolPipeline
+                : new ToolExecutionPipeline(context, hookRegistry, context.getToolRegistry(), task);
+        boolean resumeBatch = task != null && resume && task.checkpoint().phase() == Phase.TOOLS;
+        boolean resumeResponse = task != null && resume && task.checkpoint().phase() == Phase.AFTER_MODEL;
 
         while (true) {
             pendingToolCalls.clear();
-            // 一轮模型响应（无新用户输入；用户消息与历史已在 history 中）
-            ChatMessage completionNudge = null;
-            if (completionNudgePending) {
-                completionNudge = new ChatMessage("user",
-                        "<system-reminder>验证命令已成功完成。请根据用户要求和现有证据判断任务是否已完成；"
-                                + "若已完成，请直接给出最终总结并停止调用工具。只有存在明确未解决要求时才继续。"
-                                + "测试通过本身不等于需求必然完成。</system-reminder>");
-                history.add(completionNudge);
-                completionNudgePending = false;
-            }
-            try {
-                context.getAiService().streamingChat(null, history, modelName, token, recalledMemories);
-            } finally {
-                if (completionNudge != null) {
-                    history.remove(completionNudge); // 一次性提示，不污染持久会话
-                }
-            }
-            // 流式结束：残余半行上屏，再空一行，避免与后续工具确认/结果挤在一起
-            context.getUi().flushAssistantStream();
-            context.getUi().printAbove("");
-
-            // 流式被中断：丢弃残余，为已缓存的调用补配对后退出
-            if (token.isCancelled()) {
-                fillCancelledResults(pendingToolCalls, 0, history);
-                context.getUi().displayWarning("⏸️  本轮任务已被用户中断。");
-                break;
-            }
-
-            if (pendingToolCalls.isEmpty()) {
-                // ── Hook: Stop（循环即将退出）──
-                HookResult stopResult = hookRegistry.fire(HookContext.forStop(context, history));
-                if (stopResult.isContinueLoop()) {
-                    if (stopContinuations >= MAX_STOP_CONTINUATIONS) {
-                        context.getUi().displayWarning("⚠️  STOP Hook 本轮续跑已达上限("
-                                + MAX_STOP_CONTINUATIONS + ")，强制结束本轮。");
-                        break;
+            if (token.isCancelled()) return stopped(token);
+            if (resumeBatch) {
+                var cp = task.checkpoint();
+                com.thoughtcoding.task.RecoveryHistory.removeCurrentBatchResults(history, cp);
+                cp.batch().stream().map(task::invocation).map(ExecutionCheckpoint.Invocation::toToolCall)
+                        .forEach(pendingToolCalls::add);
+                resumeBatch = false;
+            } else {
+                if (!resumeResponse) {
+                    if (task != null) task.boundary(Phase.BEFORE_MODEL, history, totalIterations,
+                            stopContinuations, completionNudgePending);
+                    // 一轮模型响应（无新用户输入；用户消息与历史已在 history 中）
+                    ChatMessage completionNudge = null;
+                    ChatMessage taskSummary = task == null ? null : new ChatMessage("user", task.modelSummary());
+                    if (taskSummary != null) history.add(taskSummary);
+                    if (completionNudgePending) {
+                        completionNudge = new ChatMessage("user",
+                                "<system-reminder>验证命令已成功完成。请根据用户要求和现有证据判断任务是否已完成；"
+                                        + "若已完成，请直接给出最终总结并停止调用工具。只有存在明确未解决要求时才继续。"
+                                        + "测试通过本身不等于需求必然完成。</system-reminder>");
+                        history.add(completionNudge);
+                        completionNudgePending = false;
                     }
-                    stopContinuations++;
-                    history.add(new ChatMessage("user", buildStopContinuationPrompt(stopResult)));
-                    continue;
+                    try {
+                        context.getAiService().streamingChat(null, history,
+                                task == null ? modelName : task.checkpoint().metadata().getOrDefault("modelName", modelName),
+                                token, recalledMemories);
+                    } finally {
+                        if (taskSummary != null) history.remove(taskSummary);
+                        if (completionNudge != null) {
+                            history.remove(completionNudge); // 一次性提示，不污染持久会话
+                        }
+                    }
+                    // 流式结束：残余半行上屏，再空一行，避免与后续工具确认/结果挤在一起
+                    context.getUi().flushAssistantStream();
+                    context.getUi().printAbove("");
+                    if (task != null) {
+                        if (!pendingToolCalls.isEmpty()) task.prepare(pendingToolCalls, history);
+                        else task.boundary(Phase.AFTER_MODEL, history, totalIterations, stopContinuations, completionNudgePending);
+                    }
                 }
-                if (com.thoughtcoding.security.PlanMode.isActive()) {
-                    // 计划模式自然终止 = 计划已产出：引导用户走批准/放弃流程
-                    context.getUi().displayInfo(
-                            "📋 计划模式：计划已生成。输入 /plan approve 批准并开始执行，或 /plan exit 放弃。");
+                resumeResponse = false;
+
+                // 流式被中断：丢弃残余，为已缓存的调用补配对后退出
+                if (token.isCancelled()) {
+                    if (task == null) fillCancelledResults(pendingToolCalls, 0, history);
+                    context.getUi().displayWarning("⏸️  本轮任务已被用户中断。");
+                    return stopped(token);
                 }
-                break; // 模型只产出文本 → 自然终止
+
+                if (pendingToolCalls.isEmpty()) {
+                    // ── Hook: Stop（循环即将退出）──
+                    HookResult stopResult = hookRegistry.fire(HookContext.forStop(context, history));
+                    if (stopResult.isContinueLoop()) {
+                        if (stopContinuations >= MAX_STOP_CONTINUATIONS) {
+                            context.getUi().displayWarning("⚠️  STOP Hook 本轮续跑已达上限("
+                                    + MAX_STOP_CONTINUATIONS + ")，强制结束本轮。");
+                            return new RunOutcome(TaskStatus.PAUSED, "STOP_CONTINUATION_LIMIT");
+                        }
+                        stopContinuations++;
+                        history.add(new ChatMessage("user", buildStopContinuationPrompt(stopResult)));
+                        continue;
+                    }
+                    if (com.thoughtcoding.security.PlanMode.isActive()) {
+                        // 计划模式自然终止 = 计划已产出：引导用户走批准/放弃流程
+                        context.getUi().displayInfo(
+                                "📋 计划模式：计划已生成。输入 /plan approve 批准并开始执行，或 /plan exit 放弃。");
+                    }
+                    if (task != null) task.boundary(Phase.FINISHED, history, totalIterations,
+                            stopContinuations, false);
+                    return new RunOutcome(TaskStatus.WAITING_INPUT,
+                            com.thoughtcoding.security.PlanMode.isActive() ? "PLAN_REVIEW" : "RESPONSE_COMPLETE");
+                }
             }
 
             List<ToolCall> batch = new ArrayList<>(pendingToolCalls);
@@ -282,7 +436,7 @@ public class AgentLoop {
             // ── 批内 subAgent 并行：≥2 个 subAgent 调用时预执行（虚拟线程），
             //    其余工具保持串行。结果按调用实例暂存，下面按原顺序统一回喂。
             Map<ToolCall, ToolExecutionPipeline.Outcome> parallelResults =
-                    preExecuteSubAgents(batch, token);
+                    preExecuteSubAgents(batch, token, pipeline);
 
             boolean cancelled = false;
             boolean successfulVerification = false;
@@ -293,7 +447,7 @@ public class AgentLoop {
 
                 if (token.isCancelled()) {
                     // 用户已取消：为剩余工具一次性补 declined 结果，保持 call/result 配对
-                    fillCancelledResults(batch, i, history);
+                    if (task == null) fillCancelledResults(batch, i, history);
                     cancelled = true;
                     break;
                 }
@@ -304,10 +458,16 @@ public class AgentLoop {
                 if (parallelResults.containsKey(call)) {
                     outcome = parallelResults.get(call);
                 } else {
-                    outcome = toolPipeline.execute(call, token, history);
+                    outcome = pipeline.execute(call, token, history);
                 }
 
-                toolPipeline.recordResult(call, outcome, history);
+                pipeline.recordResult(call, outcome, history);
+                if (task != null) task.boundary(Phase.TOOLS, history, totalIterations,
+                        stopContinuations, completionNudgePending);
+                if (task != null && task.hasUnknown()) {
+                    return token.isCancelled() ? stopped(token)
+                            : new RunOutcome(TaskStatus.WAITING_INPUT, "UNKNOWN_TOOL_RESULT");
+                }
                 if (outcome.isBlocked()) {
                     batchFailure = true;
                     context.getUi().displayError(outcome.result().getError());
@@ -325,17 +485,23 @@ public class AgentLoop {
             }
 
             if (cancelled) {
-                break;      // 用户中断 → 停止循环，交回用户
+                return stopped(token);
             }
-            if (!auto) {
-                break;      // 不自动回喂结果 → 执行一批后停止
-            }
+            if (task != null && task.hasUnknown()) return new RunOutcome(TaskStatus.WAITING_INPUT, "UNKNOWN_TOOL_RESULT");
             completionNudgePending = successfulVerification && !batchFailure;
+            totalIterations++;
+            if (task != null) task.boundary(Phase.BEFORE_MODEL, history, totalIterations,
+                    stopContinuations, completionNudgePending);
+            if (!auto) {
+                return new RunOutcome(TaskStatus.PAUSED, "AUTO_PROCESS_DISABLED");
+            }
             if (++iter >= maxIter) {
                 history.add(new ChatMessage("system",
                         "已达到最大工具调用轮次(" + maxIter + ")，停止自动执行。"));
                 context.getUi().displayWarning("⚠️  已达最大工具轮次(" + maxIter + ")，停止自动执行。");
-                break;
+                if (task != null) task.boundary(Phase.BEFORE_MODEL, history, totalIterations,
+                        stopContinuations, completionNudgePending);
+                return new RunOutcome(TaskStatus.PAUSED, "ITERATION_LIMIT");
             }
         }
     }
@@ -360,12 +526,12 @@ public class AgentLoop {
      *
      * <p>每个任务在 SubAgentExecutor 的虚拟线程上跑（Semaphore 限流），
      * PreToolUse hook 在任务内触发（subAgent 恒为 ALLOW，无确认弹窗冲突）。
-     * 任何异常都收敛为失败的 ToolResult，绝不逃逸。
+     * 等待所有子调用结束后传播执行异常，持久化失败不得被转换成可继续的工具结果。
      *
      * @return 调用实例 → 结果；串行路径（0/1 个 subAgent）返回空 Map
      */
     private Map<ToolCall, ToolExecutionPipeline.Outcome> preExecuteSubAgents(
-            List<ToolCall> batch, CancelToken token) {
+            List<ToolCall> batch, CancelToken token, ToolExecutionPipeline pipeline) {
         List<ToolCall> subCalls = new ArrayList<>();
         for (ToolCall c : batch) {
             if ("subAgent".equals(c.getToolName())) {
@@ -382,18 +548,26 @@ public class AgentLoop {
         List<java.util.concurrent.Future<ToolExecutionPipeline.Outcome>> futures = new ArrayList<>();
         for (ToolCall c : subCalls) {
             futures.add(context.getSubAgentExecutor().submitForeground(
-                    () -> toolPipeline.execute(c, token, history)));
+                    () -> pipeline.execute(c, token, history)));
         }
 
+        RuntimeException failure = null;
         for (int i = 0; i < subCalls.size(); i++) {
             ToolCall c = subCalls.get(i);
             try {
                 results.put(c, futures.get(i).get());
             } catch (Exception e) {
-                results.put(c, ToolExecutionPipeline.Outcome.executed(
-                        ToolResult.error("子Agent执行异常: " + e.getMessage(), 0)));
+                if (e instanceof InterruptedException) {
+                    futures.forEach(f -> f.cancel(true));
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("并行子任务等待被中断", e);
+                }
+                Throwable cause = e.getCause() == null ? e : e.getCause();
+                if (failure == null) failure = cause instanceof RuntimeException runtime ? runtime
+                        : new IllegalStateException("子任务执行失败", cause);
             }
         }
+        if (failure != null) throw failure;
         return results;
     }
 

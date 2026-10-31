@@ -14,11 +14,23 @@ public class SubagentTurn {
 
     private final String text;
     private final List<ToolCallRef> toolCalls;
+    private final boolean failed;
 
     public SubagentTurn(String text, List<ToolCallRef> toolCalls) {
+        this(text, toolCalls, false);
+    }
+
+    private SubagentTurn(String text, List<ToolCallRef> toolCalls, boolean failed) {
         this.text = text == null ? "" : text;
         this.toolCalls = toolCalls == null ? Collections.emptyList() : toolCalls;
+        this.failed = failed;
     }
+
+    public static SubagentTurn failure(String message) {
+        return new SubagentTurn(message, Collections.emptyList(), true);
+    }
+
+    public boolean isFailed() { return failed; }
 
     public String getText() {
         return text;
