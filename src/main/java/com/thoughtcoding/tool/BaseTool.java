@@ -30,6 +30,17 @@ public abstract class BaseTool {
         return execute(input);
     }
 
+    /** Explicit execution ownership, propagated across dispatcher threads without global task state. */
+    public ToolResult execute(String input, com.thoughtcoding.core.CancelToken token,
+                              com.thoughtcoding.task.TaskService.Run task) {
+        return execute(input, token);
+    }
+
+    public ToolResult execute(String input, com.thoughtcoding.core.CancelToken token,
+                              com.thoughtcoding.task.TaskService.Run task, String invocationId) {
+        return execute(input, token, task);
+    }
+
     public String getName() {
         return name;
     }

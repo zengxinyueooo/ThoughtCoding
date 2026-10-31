@@ -25,17 +25,51 @@ public final class ToolExecutionPipeline {
     private final ThoughtCodingContext context;
     private final HookRegistry hookRegistry;
     private final ToolDispatcher dispatcher;
+    private final com.thoughtcoding.task.TaskService.Run task;
 
     public ToolExecutionPipeline(ThoughtCodingContext context,
                                  HookRegistry hookRegistry,
                                  ToolRegistry toolRegistry) {
+        this(context, hookRegistry, toolRegistry, null);
+    }
+
+    public ToolExecutionPipeline(ThoughtCodingContext context, HookRegistry hookRegistry,
+                                 ToolRegistry toolRegistry, com.thoughtcoding.task.TaskService.Run task) {
         this.context = context;
         this.hookRegistry = Objects.requireNonNull(hookRegistry, "hookRegistry");
         this.dispatcher = new ToolDispatcher(Objects.requireNonNull(toolRegistry, "toolRegistry"));
+        this.task = task;
     }
 
     /** 执行完整 Hook/工具链，但暂不写入历史，适用于并行执行后按原顺序汇总。 */
     public Outcome execute(ToolCall call, CancelToken token, List<ChatMessage> history) {
+        Objects.requireNonNull(call, "call");
+        String invocationId = null;
+        if (task != null) {
+            var invocation = task.checkpoint().batch().stream().map(task::invocation)
+                    .filter(i -> Objects.equals(i.providerCallId(), call.getProviderCallId())).findFirst()
+                    .orElseThrow(() -> new IllegalStateException("工具调用未提交到检查点"));
+            if (!Objects.equals(invocation.toolName(), call.getToolName())
+                    || !Objects.equals(invocation.parameters(), call.getParameters()))
+                throw new IllegalStateException("工具调用与已提交的检查点不一致");
+            if (invocation.finished()) return invocation.outcome();
+            if (invocation.status() != com.thoughtcoding.task.ExecutionCheckpoint.InvocationStatus.PREPARED) {
+                throw new IllegalStateException("工具结果不明，禁止重放: " + invocation.invocationId());
+            }
+            invocationId = invocation.invocationId();
+        }
+        Outcome outcome = executeInternal(call, token, history, invocationId);
+        if (task != null) {
+            String error = outcome.result().getError();
+            boolean uncertain = !outcome.blocked() && !outcome.result().isSuccess() && ((token != null && token.isCancelled())
+                    || (error != null && (error.contains("超时") || error.contains("被中断")
+                    || error.contains("已取消"))));
+            task.complete(invocationId, outcome, uncertain);
+        }
+        return outcome;
+    }
+
+    private Outcome executeInternal(ToolCall call, CancelToken token, List<ChatMessage> history, String invocationId) {
         Objects.requireNonNull(call, "call");
         List<ChatMessage> safeHistory = history != null ? history : Collections.emptyList();
 
@@ -47,7 +81,9 @@ public final class ToolExecutionPipeline {
             return Outcome.blocked(ToolResult.error(message, 0));
         }
 
-        ToolResult result = dispatcher.dispatch(call, token);
+        if (token != null && token.isCancelled()) return Outcome.blocked(ToolResult.error("执行前已取消", 0));
+        if (task != null) task.started(invocationId);
+        ToolResult result = dispatcher.dispatch(call, token, task, invocationId);
         hookRegistry.fire(HookContext.forPostTool(context, safeHistory, call, result));
         return Outcome.executed(result);
     }

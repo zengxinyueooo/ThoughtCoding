@@ -72,6 +72,7 @@ public class ThoughtCodingContext implements AutoCloseable {
     private final MemoryService memoryService;
     private final MemoryStore memoryStore; // 可为 null = 记忆功能关闭；/memory 用户命令直接访问存储层
     private final CheckpointStore checkpointStore; // /rewind 文件检查点（可为 null = 功能关闭）
+    private final com.thoughtcoding.task.TaskService taskService;
 
     private ThoughtCodingContext(Builder builder) {
         this.appConfig = builder.appConfig;
@@ -90,6 +91,7 @@ public class ThoughtCodingContext implements AutoCloseable {
         this.memoryService = builder.memoryService;
         this.memoryStore = builder.memoryStore;
         this.checkpointStore = builder.checkpointStore;
+        this.taskService = builder.taskService;
     }
 
     public static ThoughtCodingContext initialize() {
@@ -211,6 +213,8 @@ public class ThoughtCodingContext implements AutoCloseable {
                 .memoryService(memoryService)
                 .memoryStore(memoryStore)
                 .checkpointStore(checkpointStore)   // 🔥 添加 memoryService（可为 null = 记忆关闭）
+                .taskService(new com.thoughtcoding.task.TaskService(new com.thoughtcoding.task.TaskStore(
+                        Sandbox.baseWorkspaceRoot().resolve(".thoughtcoding/tasks"))))
                 .build();
 
         try {
@@ -439,6 +443,7 @@ public class ThoughtCodingContext implements AutoCloseable {
     public MemoryService getMemoryService() { return memoryService; }
     public MemoryStore getMemoryStore() { return memoryStore; }
     public CheckpointStore getCheckpointStore() { return checkpointStore; }
+    public com.thoughtcoding.task.TaskService getTaskService() { return taskService; }
     public ThoughtCodingUI getUi() { return ui; }
     public PerformanceMonitor getPerformanceMonitor() { return performanceMonitor; }
     public HookRegistry getHookRegistry() { return hookRegistry; }
@@ -527,6 +532,7 @@ public class ThoughtCodingContext implements AutoCloseable {
         private MemoryService memoryService;
         private MemoryStore memoryStore;
         private CheckpointStore checkpointStore;
+        private com.thoughtcoding.task.TaskService taskService;
 
         public Builder appConfig(AppConfig appConfig) {
             this.appConfig = appConfig;
@@ -603,6 +609,11 @@ public class ThoughtCodingContext implements AutoCloseable {
 
         public Builder checkpointStore(CheckpointStore checkpointStore) {
             this.checkpointStore = checkpointStore;
+            return this;
+        }
+
+        public Builder taskService(com.thoughtcoding.task.TaskService taskService) {
+            this.taskService = taskService;
             return this;
         }
 

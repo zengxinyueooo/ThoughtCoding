@@ -5,6 +5,8 @@ import com.thoughtcoding.core.CancelToken;
 import com.thoughtcoding.core.CancelledException;
 import com.thoughtcoding.model.ToolCall;
 import com.thoughtcoding.model.ToolResult;
+import com.thoughtcoding.security.Sandbox;
+import java.nio.file.Path;
 
 import java.util.Map;
 import java.util.Objects;
@@ -65,6 +67,16 @@ public class ToolDispatcher {
      * token 为 null 表示本调用不可取消（但超时兜底仍然生效）。
      */
     public ToolResult dispatch(ToolCall call, CancelToken token) {
+        return dispatch(call, token, null);
+    }
+
+    public ToolResult dispatch(ToolCall call, CancelToken token,
+                               com.thoughtcoding.task.TaskService.Run task) {
+        return dispatch(call, token, task, null);
+    }
+
+    public ToolResult dispatch(ToolCall call, CancelToken token,
+                               com.thoughtcoding.task.TaskService.Run task, String invocationId) {
         long start = System.currentTimeMillis();
         if (call == null) {
             return ToolResult.error("无效的工具调用：call 不能为空。", elapsedSince(start));
@@ -90,7 +102,12 @@ public class ToolDispatcher {
 
         // 用 ExecutorService.submit（FutureTask）而非 CompletableFuture：
         // 后者的 cancel(true) 不会中断运行线程，取消语义是假的。
-        Future<ToolResult> future = toolExecutor.submit(() -> tool.execute(argsJson, token));
+        Path workspace = Sandbox.workspaceRoot();
+        Future<ToolResult> future = toolExecutor.submit(() -> {
+            try (Sandbox.WorkspaceScope ignored = Sandbox.enterWorkspace(workspace)) {
+                return tool.execute(argsJson, token, task, invocationId);
+            }
+        });
         if (token != null) {
             // 取消传播：用户 stop 时中断工具线程（对已完成的 future 是 no-op，回调残留无害）
             token.onCancel(() -> future.cancel(true));
@@ -112,6 +129,7 @@ public class ToolDispatcher {
             return ToolResult.error("工具执行已取消 [" + toolName + "]。", elapsedSince(start));
         } catch (ExecutionException e) {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
+            if (cause instanceof com.thoughtcoding.task.TaskPersistenceException persistence) throw persistence;
             if (cause instanceof CancelledException cancelled) {
                 return ToolResult.error("工具执行已取消 [" + toolName + "]: " + exceptionMessage(cancelled),
                         elapsedSince(start));
