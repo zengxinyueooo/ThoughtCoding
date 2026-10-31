@@ -29,3 +29,6 @@ config.yaml
 
 # Claude 本地指导文件（不提交）
 /CLAUDE.md
+
+# Durable task state is local to the workspace
+.thoughtcoding/tasks/
