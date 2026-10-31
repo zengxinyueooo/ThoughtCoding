@@ -907,6 +907,14 @@ SessionData session = new SessionData("session-id", "标题", "model");
 
 ------
 
+## 独立任务与 Checkpoint
+
+主任务、子任务分别保存目标、步骤、执行状态和工具日志，支持暂停与跨进程恢复。后台子任务结论持久化投递，隔离任务恢复复用原 worktree。
+
+使用 `/task new <目标>`、`/task list`、`/task pause`、`/task resume <taskId>` 管理任务；命令行支持 `--list-tasks` 和 `--resume-task <taskId>`。自然回答结束等待验收，使用 `/task complete <taskId>` 标记完成。不确定的写操作需核验后才能继续。
+
+详见 [任务状态、恢复协议与命令说明](docs/task-checkpoints.md)。
+
 ## 许可证
 
 本项目采用 MIT 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。

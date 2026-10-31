@@ -8,6 +8,8 @@ import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -24,6 +26,8 @@ class ToolDispatcherTimeoutTest {
     /** 永远执行不完的假工具（sleep 不可中断场景的替身）。 */
     private static class HangingTool extends BaseTool {
         volatile boolean interrupted = false;
+        final CountDownLatch started = new CountDownLatch(1);
+        final CountDownLatch acknowledged = new CountDownLatch(1);
 
         HangingTool() {
             super("hang", "测试用挂死工具");
@@ -32,9 +36,11 @@ class ToolDispatcherTimeoutTest {
         @Override
         public ToolResult execute(String input) {
             try {
+                started.countDown();
                 Thread.sleep(60_000);
             } catch (InterruptedException e) {
                 interrupted = true;
+                acknowledged.countDown();
                 Thread.currentThread().interrupt();
             }
             return ToolResult.success("不应到达", 0);
@@ -103,11 +109,17 @@ class ToolDispatcherTimeoutTest {
         CancelToken token = new CancelToken();
         Thread runner = new Thread(() -> dispatcher.dispatch(call("hang"), token));
         runner.start();
-        Thread.sleep(150); // 让工具先跑起来
-        token.cancel();
-        runner.join(5_000);
-
-        assertFalse(runner.isAlive(), "取消后 dispatch 应 promptly 返回");
-        assertTrue(hanging.interrupted, "工具线程应收到中断");
+        try {
+            assertTrue(hanging.started.await(5, TimeUnit.SECONDS), "工具应先进入执行状态");
+            token.cancel();
+            runner.join(5_000);
+            assertFalse(runner.isAlive(), "取消后 dispatch 应 promptly 返回");
+            // Future.cancel can release dispatch before the tool handles its interrupt.
+            assertTrue(hanging.acknowledged.await(5, TimeUnit.SECONDS), "工具应在期限内确认中断");
+            assertTrue(hanging.interrupted, "工具线程应收到中断");
+        } finally {
+            token.cancel();
+            runner.join(5_000);
+        }
     }
 }

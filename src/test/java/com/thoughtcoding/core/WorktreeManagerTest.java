@@ -71,6 +71,29 @@ class WorktreeManagerTest {
     }
 
     @Test
+    void durableWorktreeCanResumeAtSamePathAndKeepsArtifactIdentity() {
+        WorktreeManager manager = manager();
+        var first = manager.runManaged("durable", record -> {
+            try { Files.writeString(Sandbox.resolve("sample.txt"), "first\n"); }
+            catch (IOException e) { throw new IllegalStateException(e); }
+            return "paused";
+        }, true);
+        Path retained = first.outcome().worktree();
+        assertTrue(Files.isDirectory(retained));
+        var second = manager.resumeManaged(first.outcome().taskId(), record -> {
+            assertEquals(retained.toAbsolutePath().normalize(), Sandbox.workspaceRoot().toAbsolutePath().normalize());
+            assertEquals("first\n", read(Sandbox.resolve("sample.txt")).replace("\r\n", "\n"));
+            try { Files.writeString(Sandbox.resolve("sample.txt"), "second\n"); }
+            catch (IOException e) { throw new IllegalStateException(e); }
+            return "done";
+        });
+        assertEquals(first.outcome().taskId(), second.outcome().taskId());
+        assertEquals(first.outcome().branch(), second.outcome().branch());
+        assertNotEquals(first.outcome().commit(), second.outcome().commit());
+        assertEquals("main\n", read(repository.resolve("sample.txt")).replace("\r\n", "\n"));
+    }
+
+    @Test
     void shouldRemoveTemporaryBranchWhenTaskProducesNoChanges() {
         WorktreeManager manager = manager();
 
@@ -247,6 +270,19 @@ class WorktreeManagerTest {
 
         assertEquals(1, report.aged());
         assertTrue(report.needsAttention());
+    }
+
+    @Test
+    void durableRegistrationReusesArtifactAndRejectsConcurrentResume() {
+        WorktreeManager manager = manager();
+        var first = manager.runDurable("durable", "stable-child", record -> {
+            assertThrows(IllegalStateException.class,
+                    () -> manager.resumeManaged(record.id(), ignored -> "duplicate"));
+            return "first";
+        });
+        var resumed = manager.runDurable("durable", "stable-child", record -> "second");
+        assertEquals(first.outcome().taskId(), resumed.outcome().taskId());
+        assertEquals(1, manager.listTasks().size());
     }
 
     private WorktreeManager.RunResult runParallelChange(String name, String content) {
