@@ -290,6 +290,9 @@ public class MCPClient {
                 }
                 if (response.getResult() != null) {
                     Map<String, Object> result = (Map<String, Object>) response.getResult();
+                    if (Boolean.TRUE.equals(result.get("isError"))) {
+                        throw new IOException("MCP tool error: " + result.get("content"));
+                    }
                     return result.get("content");
                 }
             }

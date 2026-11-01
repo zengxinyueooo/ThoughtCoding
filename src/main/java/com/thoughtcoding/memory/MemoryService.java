@@ -1,5 +1,7 @@
 package com.thoughtcoding.memory;
 
+import com.thoughtcoding.observability.Telemetry;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ChatMessage;
@@ -55,6 +57,7 @@ public class MemoryService {
     private final int maxIndexEntries;
     private final int maxPerTurnInjections;
     private final int maxInjectionChars;
+    private String tracingModelName = "unknown";
     private final OpenAiChatModel model; // 独立同步模型（null = 模型不可用 → 记忆功能静默降级）
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -78,6 +81,8 @@ public class MemoryService {
             if (modelConfig == null) {
                 return null;
             }
+            tracingModelName = modelConfig.getName();
+            Telemetry.registerSecret(modelConfig.getApiKey());
             return OpenAiChatModel.builder()
                     .baseUrl(modelConfig.getBaseURL())
                     .apiKey(modelConfig.getApiKey())
@@ -352,7 +357,7 @@ public class MemoryService {
         if (!dreaming.compareAndSet(false, true)) {
             return; // 已有整理在进行
         }
-        Thread.ofVirtual().name("memory-dream").start(() -> {
+        var backgroundTrace = Telemetry.background(() -> {
             try {
                 int before = store.size();
                 if (doDream() && notifier != null) {
@@ -362,6 +367,10 @@ public class MemoryService {
                 dreaming.set(false);
             }
         });
+        try { Thread.ofVirtual().name("memory-dream").start(backgroundTrace); }
+        catch (RuntimeException error) {
+            backgroundTrace.close(); dreaming.set(false); throw error;
+        }
     }
 
     /**
@@ -514,7 +523,8 @@ public class MemoryService {
     /** 同步 LLM 调用，失败返回 null（调用方各自降级）。 */
     private String callLlm(String prompt) {
         try {
-            ChatResponse response = model.chat(UserMessage.from(prompt));
+            ChatResponse response = com.thoughtcoding.observability.ModelTracing.sync(
+                    "memory", tracingModelName, prompt, () -> model.chat(UserMessage.from(prompt)));
             return response.aiMessage().text();
         } catch (Exception e) {
             log.warn("记忆模型调用失败: {}", e.getMessage());

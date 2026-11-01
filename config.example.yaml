@@ -13,7 +13,21 @@ models:
 
 defaultModel: deepseek-chat
 
+# Shell 沙箱：第一版在 Linux/WSL2 内运行整个 Java 应用，详见 docs/shell-sandbox.md。
+# 旧配置缺省为 off；新配置建议 required。依赖/策略错误会拒绝启动，不自动降级。
+sandbox:
+  mode: required
+  runtimePath: ~/.local/share/thoughtcoding/srt/node_modules/@anthropic-ai/sandbox-runtime/dist/cli.js
+  nodePath: /usr/bin/node # Node.js >= 22.12.0；使用 nvm 时填实际绝对路径
+  maxTimeoutSeconds: 100
+  allowedDomains: [] # 默认禁网；需要下载 Maven 依赖时可显式添加 repo.maven.apache.org
+  deniedDomains: []
+  denyRead: [] # 在内置凭据保护之外追加路径/glob
+  denyWrite: []
+  extraWritePaths: [] # 已存在的绝对路径，例如 ~/.m2/repository；不要开放整个 HOME
+
 ai:
+  deliveryReviewEnabled: false # 实验开关：代码交付前逐项检查需求、执行分支和验证证据
   autoProcessToolResults: true  # true=工具结果自动回喂模型，形成 agentic 多轮循环
   maxToolIterations: 10         # 单次用户输入内的最大工具轮次上限
   maxConcurrentSubagents: 3     # 并行子代理上限（虚拟线程 + Semaphore 限流，防止触发模型 API 限流）

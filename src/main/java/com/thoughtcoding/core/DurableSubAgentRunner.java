@@ -1,5 +1,6 @@
 package com.thoughtcoding.core;
 
+import com.thoughtcoding.observability.Telemetry;
 import com.thoughtcoding.security.Sandbox;
 import com.thoughtcoding.task.ExecutionCheckpoint;
 import com.thoughtcoding.task.TaskService;
@@ -24,7 +25,12 @@ public final class DurableSubAgentRunner {
         Path workspace = Path.of(saved.workspace());
         if (!Files.isDirectory(workspace)) throw new IllegalStateException("子任务工作目录已丢失: " + workspace);
         try (var scope = Sandbox.enterWorkspace(workspace);
-             var task = service.open(taskId, sessionId, true)) {
+             var task = service.open(taskId, sessionId, true);
+             var trace = Telemetry.observation("agent.subagent", "agent", saved.task().objective());
+             var tracing = trace.activate()) {
+            trace.metadata("task_id", taskId);
+            trace.metadata("parent_task_id", saved.task().parentTaskId());
+            trace.metadata("run_id", task.state().runId());
             if (saved.metadata().containsKey("resultId"))
                 task.metadata(Map.of("deliverToInbox", "true"));
             String label = saved.metadata().getOrDefault("label", "SubAgent");
@@ -41,6 +47,7 @@ public final class DurableSubAgentRunner {
                     task.status(token != null && token.isCancelled()
                             ? (token.isPauseRequested() ? TaskStatus.PAUSED : TaskStatus.CANCELLED) : TaskStatus.FAILED,
                             failure.getMessage());
+                    trace.error(failure);
                     return "子任务执行失败: " + failure.getMessage();
                 }
             };
@@ -59,6 +66,8 @@ public final class DurableSubAgentRunner {
             } else result = action.apply(null);
             String published = "[子任务 " + taskId + "，状态 " + task.state().status() + "]\n" + result;
             task.metadata(Map.of("resultId", taskId + ":" + task.state().runId(), "result", published));
+            trace.output(published);
+            trace.metadata("status", task.state().status().name());
             return published;
         }
     }

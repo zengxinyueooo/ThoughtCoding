@@ -1,5 +1,7 @@
 package com.thoughtcoding.core;
 
+import com.thoughtcoding.observability.Telemetry;
+
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.config.ConfigManager;
 import com.thoughtcoding.config.MCPConfig;
@@ -95,6 +97,7 @@ public class ThoughtCodingContext implements AutoCloseable {
     }
 
     public static ThoughtCodingContext initialize() {
+        Telemetry.initialize();
         // 分层初始化，确保依赖顺序正确
 
         // 初始化配置管理器
@@ -191,6 +194,12 @@ public class ThoughtCodingContext implements AutoCloseable {
 
         // UI层初始化
         ThoughtCodingUI ui = new ThoughtCodingUI();
+        ui.displayInfo(appConfig.getTools().getBash().isEnabled()
+                ? ("required".equals(appConfig.getSandbox().getMode())
+                ? "Shell 沙箱：required（SRT " + com.thoughtcoding.execution.SrtCommandExecutor.VERSION
+                + "）；仅覆盖 Shell 及其子进程，文件工具/MCP/Hook 仍按原权限运行。"
+                : "Shell 沙箱：off（命令直接在宿主执行）。")
+                : "Shell 工具已禁用。");
 
         // 并行/后台子代理调度器：虚拟线程 + Semaphore（上限读 ai.maxConcurrentSubagents）
         SubAgentExecutor subAgentExecutor = new SubAgentExecutor(
@@ -409,6 +418,7 @@ public class ThoughtCodingContext implements AutoCloseable {
             if (checkpointStore != null) checkpointStore.clearAll();
         });
         shutdownMCP();
+        closeSafely("Tracing", Telemetry::shutdown);
         closeSafely("终端", () -> {
             if (ui != null) ui.close();
         });

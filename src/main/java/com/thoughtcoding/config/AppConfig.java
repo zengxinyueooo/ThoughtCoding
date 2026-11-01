@@ -38,6 +38,16 @@ public class AppConfig {
     @JsonProperty("hooks")
     private HooksConfig hooks = new HooksConfig(); // 用户可配置外部命令 Hook
 
+    @JsonProperty("sandbox")
+    private ShellSandboxConfig sandbox = new ShellSandboxConfig();
+
+    public ShellSandboxConfig getSandbox() {
+        if (sandbox == null) throw new IllegalArgumentException("sandbox 不能为 null");
+        return sandbox;
+    }
+
+    public void setSandbox(ShellSandboxConfig sandbox) { this.sandbox = sandbox; }
+
 
     // Getters and Setters
     public Map<String, ModelConfig> getModels() {
@@ -327,6 +337,13 @@ public class AppConfig {
      */
     @Data
     public static class AIConfig {
+        @JsonProperty("deliveryReviewEnabled")
+        private boolean deliveryReviewEnabled = false;
+
+        public boolean isDeliveryReviewEnabled() { return deliveryReviewEnabled; }
+
+        public void setDeliveryReviewEnabled(boolean enabled) { deliveryReviewEnabled = enabled; }
+
         @JsonProperty("autoProcessToolResults")
         private boolean autoProcessToolResults = true; // 默认true：工具执行后把结果反馈给AI，形成 agentic 循环
 

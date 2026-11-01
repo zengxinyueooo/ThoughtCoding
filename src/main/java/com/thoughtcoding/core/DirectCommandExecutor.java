@@ -1,5 +1,7 @@
 package com.thoughtcoding.core;
 
+import com.thoughtcoding.observability.Telemetry;
+
 import com.thoughtcoding.hook.HookRegistry;
 import com.thoughtcoding.hook.HookType;
 import com.thoughtcoding.model.ToolCall;
@@ -324,6 +326,13 @@ public class DirectCommandExecutor {
      * 执行直接命令
      */
     public boolean executeDirectCommand(String input) {
+        try (var task = Telemetry.task(null, input)) {
+            try { return executeDirectCommandInternal(input); }
+            catch (RuntimeException error) { task.error(error); throw error; }
+        }
+    }
+
+    private boolean executeDirectCommandInternal(String input) {
         String trimmedInput = input.trim();
         String command = null;
 

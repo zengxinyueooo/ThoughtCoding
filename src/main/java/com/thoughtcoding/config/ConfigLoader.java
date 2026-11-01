@@ -50,27 +50,37 @@ public class ConfigLoader {
 
     public AppConfig loadConfig(String configPath) {
         try {
-            ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
+            ObjectMapper mapper = new ObjectMapper(new YAMLFactory()
+                    .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION));
+            mapper.enable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
 
             // 尝试从文件系统加载
             Path filePath = Paths.get(configPath);
             if (Files.exists(filePath)) {
-                return mapper.readValue(filePath.toFile(), AppConfig.class);
+                return validated(mapper.readValue(filePath.toFile(), AppConfig.class));
             }
 
             // 尝试从类路径加载
-            InputStream inputStream = getClass().getClassLoader().getResourceAsStream(configPath);
-            if (inputStream != null) {
-                return mapper.readValue(inputStream, AppConfig.class);
+            try (InputStream inputStream = getClass().getClassLoader().getResourceAsStream(configPath)) {
+                if (inputStream != null) {
+                    return validated(mapper.readValue(inputStream, AppConfig.class));
+                }
             }
 
             // 加载默认配置
             return createDefaultConfig();
 
         } catch (Exception e) {
-            System.err.println("Failed to load configuration: " + e.getMessage());
-            return createDefaultConfig();
+            // Never discard a requested sandbox policy by falling back to defaults.
+            // Parser messages may contain API keys from the source: do not echo them.
+            throw new IllegalArgumentException("配置读取失败：请检查 YAML 和 sandbox 字段；拒绝使用默认配置继续启动。");
         }
+    }
+
+    private AppConfig validated(AppConfig config) {
+        if (config == null) throw new IllegalArgumentException("配置为空");
+        config.getSandbox().validate();
+        return config;
     }
 
     private AppConfig createDefaultConfig() {

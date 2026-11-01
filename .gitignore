@@ -30,6 +30,23 @@ config.yaml
 # Claude 本地指导文件（不提交）
 /CLAUDE.md
 
-# Durable task state is local to the workspace
+# Local evaluation artifacts (not Agent benchmark claims)
+evals/results/
+evals/__pycache__/
+evals/.build/
+
+# 文件检查点（write/edit 前快照，进程退出清理，不提交）
+checkpoints/
 .thoughtcoding/tasks/
 .thoughtcoding/state.db*
+
+# Local environment credentials
+.env
+.env.*
+!.env.example
+
+# Versioned evaluation adapters (generated, never publish)
+evals/.build-*/
+
+# Local Python environment
+.venv/

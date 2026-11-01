@@ -1,5 +1,7 @@
 package com.thoughtcoding.core;
 
+import com.thoughtcoding.observability.Telemetry;
+
 import com.thoughtcoding.hook.HookContext;
 import com.thoughtcoding.hook.HookRegistry;
 import com.thoughtcoding.hook.HookResult;
@@ -25,6 +27,7 @@ public final class ToolExecutionPipeline {
     private final ThoughtCodingContext context;
     private final HookRegistry hookRegistry;
     private final ToolDispatcher dispatcher;
+    private final ToolRegistry registry;
     private final com.thoughtcoding.task.TaskService.Run task;
 
     public ToolExecutionPipeline(ThoughtCodingContext context,
@@ -38,6 +41,7 @@ public final class ToolExecutionPipeline {
         this.context = context;
         this.hookRegistry = Objects.requireNonNull(hookRegistry, "hookRegistry");
         this.dispatcher = new ToolDispatcher(Objects.requireNonNull(toolRegistry, "toolRegistry"));
+        this.registry = toolRegistry;
         this.task = task;
     }
 
@@ -58,15 +62,34 @@ public final class ToolExecutionPipeline {
             }
             invocationId = invocation.invocationId();
         }
-        Outcome outcome = executeInternal(call, token, history, invocationId);
-        if (task != null) {
-            String error = outcome.result().getError();
-            boolean uncertain = !outcome.blocked() && !outcome.result().isSuccess() && ((token != null && token.isCancelled())
-                    || (error != null && (error.contains("超时") || error.contains("被中断")
-                    || error.contains("已取消"))));
-            task.complete(invocationId, outcome, uncertain);
+        try (var trace = Telemetry.observation("tool." + call.getToolName(), "tool", call.getParameters());
+             var scope = trace.activate()) {
+            trace.metadata("tool_name", call.getToolName());
+            trace.metadata("provider_call_id", call.getProviderCallId());
+            if (call.getToolName() != null) trace.metadata("owner", registry.ownerOf(call.getToolName()));
+            try {
+                Outcome outcome = executeInternal(call, token, history, invocationId);
+                if (task != null) {
+                    String error = outcome.result().getError();
+                    boolean uncertain = !outcome.blocked() && !outcome.result().isSuccess() && ((token != null && token.isCancelled())
+                            || (error != null && (error.contains("超时") || error.contains("被中断")
+                            || error.contains("已取消"))));
+                    task.complete(invocationId, outcome, uncertain);
+                }
+                trace.output(outcome.result().isSuccess()
+                        ? outcome.result().getOutput() : outcome.result().getError());
+                trace.metadata("success", outcome.result().isSuccess());
+                trace.metadata("execution_latency_ms", outcome.result().getExecutionTime());
+                if (outcome.isBlocked()) trace.metadata("status", "blocked");
+                else if (token != null && token.isCancelled()) trace.metadata("status", "cancelled");
+                else if (!outcome.result().isSuccess()) trace.error(outcome.result().getError());
+                else trace.metadata("status", "success");
+                return outcome;
+            } catch (RuntimeException error) {
+                trace.error(error);
+                throw error;
+            }
         }
-        return outcome;
     }
 
     private Outcome executeInternal(ToolCall call, CancelToken token, List<ChatMessage> history, String invocationId) {

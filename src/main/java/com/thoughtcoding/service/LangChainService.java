@@ -1,5 +1,7 @@
 package com.thoughtcoding.service;
 
+import com.thoughtcoding.observability.Telemetry;
+
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.model.ChatMessage;
 import com.thoughtcoding.model.SubagentTurn;
@@ -67,6 +69,7 @@ public class LangChainService implements AIService {
     }
 
     private StreamingChatModel createDeepSeekModel(AppConfig.ModelConfig config) {
+        Telemetry.registerSecret(config.getApiKey());
         return OpenAiStreamingChatModel.builder()
                 .baseUrl(config.getBaseURL())
                 .apiKey(config.getApiKey())
@@ -105,13 +108,14 @@ public class LangChainService implements AIService {
         }
 
         isGenerating = true;
+        Telemetry.logicalCall();
         shouldStop = false;
 
         final CompletableFuture<Void> completionFuture = new CompletableFuture<>();
 
         // 取消传播：token 触发时提前完成 future，让下面的 get() 立即返回。
         // 已知限制：langchain4j 不暴露底层 okhttp 调用的取消，HTTP 流由 SDK 自然收尾；
-        // 请求包装器丢弃等待结束后的迟到回调，避免污染恢复历史。
+        // ModelTracing 会丢弃等待结束后的迟到回调，避免污染历史或重复结束 Span。
         if (token != null) {
             token.onCancel(() -> completionFuture.complete(null));
         }
@@ -127,17 +131,25 @@ public class LangChainService implements AIService {
             try {
                 completionFuture.get(5, TimeUnit.MINUTES);
             } catch (java.util.concurrent.TimeoutException e) {
+                Telemetry.taskStatus("timeout");
+                Telemetry.currentStatus("timeout");
                 completionFuture.cancel(true);
                 throw new IllegalStateException("流式响应超时", e);
             } catch (Exception e) {
                 completionFuture.cancel(true);
                 if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+                if (token == null || !token.isCancelled()) {
+                    Telemetry.taskStatus("error");
+                    Telemetry.currentStatus("error");
+                }
                 throw new IllegalStateException("等待流式响应失败", e);
             }
 
         } catch (Exception e) {
             isGenerating = false;
             shouldStop = false;
+            Telemetry.taskStatus("error");
+            Telemetry.currentStatus("error");
             System.err.println("❌ Service error: " + e.getMessage());
             throw new IllegalStateException("服务暂时不可用: " + e.getMessage(), e);
         }
@@ -257,7 +269,7 @@ public class LangChainService implements AIService {
                         "\n⚠️ API 瞬时错误（限流/网络），" + (delayMs / 1000)
                                 + " 秒后自动重试（第 " + attempts + "/" + MAX_STREAM_RETRIES + " 次）...\n\n"));
             }
-            retryScheduler.schedule(() -> {
+            retryScheduler.schedule(Telemetry.wrap(() -> {
                 if (shouldStop || completionFuture.isDone()
                         || (token != null && token.isCancelled())) {
                     // 退避期间被取消/停止：future 已由取消路径完成，静默返回
@@ -268,7 +280,7 @@ public class LangChainService implements AIService {
                 } catch (Exception e) {
                     failThrough(e);
                 }
-            }, delayMs, TimeUnit.MILLISECONDS);
+            }), delayMs, TimeUnit.MILLISECONDS);
         }
 
         /** 最终失败路径：UI 上屏错误并 exceptional 完成 future，<b>不写入 history</b>。 */
@@ -277,6 +289,8 @@ public class LangChainService implements AIService {
             if (completionFuture.isDone()) {
                 return;
             }
+            Telemetry.taskStatus("error");
+            Telemetry.currentStatus("error");
             try {
                 System.err.println("❌ API error: " + error.getMessage());
                 // 只上屏、不进 history：把错误伪装成 assistant 消息会让模型下轮看到
@@ -300,23 +314,12 @@ public class LangChainService implements AIService {
                                 StreamingChatResponseHandler handler,
                                 com.thoughtcoding.core.CancelToken token,
                                 CompletableFuture<?> future) {
-        if (future.isDone() || (token != null && token.isCancelled())) return;
-        var terminal = new java.util.concurrent.atomic.AtomicBoolean();
-        future.whenComplete((result, error) -> terminal.set(true));
+        AppConfig.ModelConfig config = appConfig.getModelConfig(appConfig.getDefaultModel());
         try {
-            streamingChatModel.chat(request, new StreamingChatResponseHandler() {
-                @Override public void onPartialResponse(String text) {
-                    if (!terminal.get() && (token == null || !token.isCancelled())) handler.onPartialResponse(text);
-                }
-                @Override public void onCompleteResponse(dev.langchain4j.model.chat.response.ChatResponse response) {
-                    if (terminal.compareAndSet(false, true) && (token == null || !token.isCancelled())) handler.onCompleteResponse(response);
-                }
-                @Override public void onError(Throwable error) {
-                    if (terminal.compareAndSet(false, true)) handler.onError(error);
-                }
-            });
+            com.thoughtcoding.observability.ModelTracing.stream(streamingChatModel, request, handler,
+                    config == null ? "unknown" : config.getName(), token, future);
         } catch (RuntimeException error) {
-            if (terminal.compareAndSet(false, true)) handler.onError(error);
+            handler.onError(error);
         }
     }
 
@@ -393,6 +396,7 @@ public class LangChainService implements AIService {
     public SubagentTurn chatOnceForSubagent(String systemPrompt, List<ChatMessage> history,
                                             java.util.function.Consumer<String> tokenSink,
                                             com.thoughtcoding.core.CancelToken token) {
+        Telemetry.logicalCall();
         if (streamingChatModel == null) {
             return SubagentTurn.failure("(子Agent不可用：模型未初始化)");
         }
@@ -478,12 +482,12 @@ public class LangChainService implements AIService {
                     } catch (Exception ignored) {
                     }
                 }
-                retryScheduler.schedule(() -> {
+                retryScheduler.schedule(Telemetry.wrap(() -> {
                     if (future.isDone() || (token != null && token.isCancelled())) {
                         return; // 退避期间已取消/完成
                     }
                     guardedStream(request, this, token, future);
-                }, delayMs, TimeUnit.MILLISECONDS);
+                }), delayMs, TimeUnit.MILLISECONDS);
             }
         }, token, future);
 
@@ -492,6 +496,7 @@ public class LangChainService implements AIService {
             return future.get(5, TimeUnit.MINUTES);
         } catch (java.util.concurrent.TimeoutException e) {
             future.cancel(true);
+            Telemetry.currentStatus("timeout");
             return SubagentTurn.failure("(子Agent调用超时)");
         } catch (java.util.concurrent.CancellationException e) {
             return SubagentTurn.failure("(子Agent调用已被用户取消)");
@@ -499,6 +504,7 @@ public class LangChainService implements AIService {
             future.cancel(true);
             if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             Throwable cause = e.getCause() != null ? e.getCause() : e;
+            Telemetry.currentStatus("error");
             return SubagentTurn.failure("(子Agent调用失败: " + cause.getMessage() + ")");
         }
     }

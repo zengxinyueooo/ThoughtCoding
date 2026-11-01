@@ -1,5 +1,7 @@
 package com.thoughtcoding.core;
 
+import com.thoughtcoding.observability.Telemetry;
+
 import com.thoughtcoding.config.AppConfig;
 import com.thoughtcoding.hook.DuplicateToolCallGuard;
 import com.thoughtcoding.hook.HookContext;
@@ -187,120 +189,144 @@ public class AgentLoop {
         executionFailed = false;
         PerformanceMonitor monitor = context.getPerformanceMonitor();
         monitor.start();
+        int historyStart = history.size();
         TaskService.Run task = null;
         com.thoughtcoding.task.TaskLeaseManager.Lease sessionLease = null;
-        try {
-            TaskService tasks = context.getTaskService();
-            if (tasks != null) {
-                sessionLease = tasks.lockSession(sessionId);
-                tasks.recoverInterrupted(sessionId);
-                var newestRoot = tasks.store().list(sessionId).stream().filter(t -> t.parentTaskId() == null)
-                        .max(java.util.Comparator.comparing(com.thoughtcoding.task.TaskState::createdAt)).orElse(null);
-                if (newestRoot != null) {
-                    var latestHistory = tasks.store().load(newestRoot.taskId()).messages();
-                    if (latestHistory.size() > history.size()
-                            && com.thoughtcoding.task.RecoveryHistory.isPrefix(history, latestHistory)) {
-                        history.clear();
-                        latestHistory.forEach(m -> history.add(m.toChatMessage()));
-                    }
-                }
-                String taskId = requestedTaskId;
-                if (!resume && !newTask) {
-                    var latest = tasks.store().list(sessionId).stream().filter(t -> t.parentTaskId() == null)
+        try (var taskTrace = Telemetry.task(sessionId, input);
+             var mainTrace = Telemetry.observation("agent.main", "agent", input);
+             var traceScope = mainTrace.activate()) {
+            try {
+                TaskService tasks = context.getTaskService();
+                if (tasks != null) {
+                    sessionLease = tasks.lockSession(sessionId);
+                    tasks.recoverInterrupted(sessionId);
+                    var newestRoot = tasks.store().list(sessionId).stream().filter(t -> t.parentTaskId() == null)
                             .max(java.util.Comparator.comparing(com.thoughtcoding.task.TaskState::createdAt)).orElse(null);
-                    taskId = latest == null || latest.status().terminal() ? null : latest.taskId();
+                    if (newestRoot != null) {
+                        var latestHistory = tasks.store().load(newestRoot.taskId()).messages();
+                        if (latestHistory.size() > history.size()
+                                && com.thoughtcoding.task.RecoveryHistory.isPrefix(history, latestHistory)) {
+                            history.clear();
+                            latestHistory.forEach(m -> history.add(m.toChatMessage()));
+                            historyStart = history.size();
+                        }
+                    }
+                    String taskId = requestedTaskId;
+                    if (!resume && !newTask) {
+                        var latest = tasks.store().list(sessionId).stream().filter(t -> t.parentTaskId() == null)
+                                .max(java.util.Comparator.comparing(com.thoughtcoding.task.TaskState::createdAt)).orElse(null);
+                        taskId = latest == null || latest.status().terminal() ? null : latest.taskId();
+                    }
+                    if (taskId == null) taskId = tasks.create(sessionId, null, input, history);
+                    ExecutionCheckpoint saved = tasks.store().load(taskId);
+                    if (!resume && saved.phase() == Phase.TOOLS) {
+                        throw new IllegalStateException("有尚未完成的工具批次，请先 /task resume " + taskId);
+                    }
+                    if (resume) {
+                        if (!com.thoughtcoding.task.RecoveryHistory.isPrefix(history, saved.messages())) {
+                            throw new IllegalStateException("会话已有较新的消息；请在原会话恢复该任务，避免覆盖对话");
+                        }
+                    }
+                    task = tasks.open(taskId, sessionId, resume);
+                    if (!resume) task.metadata(Map.of("planMode", Boolean.toString(com.thoughtcoding.security.PlanMode.isActive()),
+                            "modelName", modelName));
+                    activeTaskId = taskId;
+                    mainTrace.metadata("task_id", taskId);
+                    mainTrace.metadata("run_id", task.state().runId());
+                    if (resume || (saved.messages().size() > history.size()
+                            && com.thoughtcoding.task.RecoveryHistory.isPrefix(history, saved.messages()))) {
+                        history.clear();
+                        saved.messages().forEach(m -> history.add(m.toChatMessage()));
+                        historyStart = history.size();
+                    }
+                } else if (resume) {
+                    throw new IllegalStateException("任务持久化服务未启用");
                 }
-                if (taskId == null) taskId = tasks.create(sessionId, null, input, history);
-                ExecutionCheckpoint saved = tasks.store().load(taskId);
-                if (!resume && saved.phase() == Phase.TOOLS) {
-                    throw new IllegalStateException("有尚未完成的工具批次，请先 /task resume " + taskId);
+                pendingToolCalls.clear();
+                duplicateCallGuard.reset();   // 每轮用户对话重置重复调用记忆，跨轮的相同首调不误拦
+
+                // ── Hook: UserPromptSubmit（进入 LLM 前）—— BLOCK 则跳过本轮 ──
+                HookContext promptContext = HookContext.forUserPrompt(context, history,
+                        resume ? task.state().objective() : input);
+                HookResult promptResult = hookRegistry.fire(promptContext);
+                if (promptResult.isBlocked()) {
+                    taskTrace.status("blocked");
+                    mainTrace.metadata("status", "blocked");
+                    if (task != null) task.status(TaskStatus.WAITING_INPUT, "PROMPT_BLOCKED");
+                    context.getUi().displayWarning(promptResult.message() != null
+                            ? promptResult.message() : "本轮输入已被 Hook 阻止。");
+                    return;
                 }
-                if (resume) {
-                    if (!com.thoughtcoding.task.RecoveryHistory.isPrefix(history, saved.messages())) {
-                        throw new IllegalStateException("会话已有较新的消息；请在原会话恢复该任务，避免覆盖对话");
+
+                // 后台子代理结论注入：在用户新输入之前插入，让模型先看到已完成任务的结论
+                if (!resume) injectCompletedBackgroundTasks();
+
+                String modelPrompt = promptContext.buildPromptForModel();
+                if (!resume) {
+                    history.add(new ChatMessage("user", modelPrompt));
+                    if (task != null) task.boundary(Phase.BEFORE_MODEL, history,
+                            task.checkpoint().iterations(), 0, false);
+                }
+                if (task != null && task.checkpoint().phase() != Phase.TOOLS) task.receiveResults(history);
+
+                // ── 记忆：本轮开始前 LLM 召回相关记忆；正文沿调用链请求局部传递（同 CancelToken 模式），
+                // 不落 ContextManager 共享字段，避免并行/后台回合互相串写 ──
+                MemoryService memory = context.getMemoryService();
+                String recalledMemories = memory != null ? memory.recall(history) : null;
+
+                // 原生 function calling：多轮 agentic 循环
+                RunOutcome outcome = runNativeToolLoop(token, recalledMemories, task, resume);
+                if (task != null) task.status(outcome.status(), outcome.reason());
+                taskTrace.status(outcome.status().name().toLowerCase(java.util.Locale.ROOT));
+                mainTrace.metadata("stop_reason", outcome.reason());
+
+                // ── 记忆：按信号门控储存（省掉每轮空转的抽取调用），整理(dream)后台异步 ──
+                // 触发条件二选一：主模型在本轮输出过 <memory-signal/> 标记，或用户输入含明确的记忆诉求词。
+                // 被取消（stop）的回合不写记忆：半截对话不构成可靠记忆，dream 的整理阈值计数也不应前移。
+                // 计划模式回合同样不写：只读研究阶段产生的是过程性信息，不是沉淀下来的事实。
+                if (memory != null && !token.isCancelled()
+                        && !com.thoughtcoding.security.PlanMode.isActive()) {
+                    boolean signaled = stripMemorySignal(history);
+                    if (signaled || EXPLICIT_MEMORY_REQUEST.matcher(modelPrompt).find()) {
+                        memory.remember(history);
+                        memory.dreamAsync(false, msg -> context.getUi().displayInfo(msg));
                     }
                 }
-                task = tasks.open(taskId, sessionId, resume);
-                if (!resume) task.metadata(Map.of("planMode", Boolean.toString(com.thoughtcoding.security.PlanMode.isActive()),
-                        "modelName", modelName));
-                activeTaskId = taskId;
-                if (resume || (saved.messages().size() > history.size()
-                        && com.thoughtcoding.task.RecoveryHistory.isPrefix(history, saved.messages()))) {
+
+                if (task != null) {
+                    var cp = task.checkpoint();
+                    task.boundary(cp.phase(), history, cp.iterations(), cp.stopContinuations(), cp.completionNudge());
+                }
+                context.getSessionService().saveSession(sessionId, history);
+                String finalOutput = history.stream().skip(historyStart).filter(m -> "assistant".equals(m.getRole()))
+                        .map(ChatMessage::getContent).filter(java.util.Objects::nonNull)
+                        .reduce((a, b) -> b).orElse("");
+                taskTrace.output(finalOutput);
+                mainTrace.output(finalOutput);
+            } catch (Exception e) {
+                executionFailed = true;
+                taskTrace.status("error");
+                mainTrace.error(e);
+                context.getUi().displayError("Error processing input: " + e.getMessage());
+                if (task != null) {
+                    try { task.status(TaskStatus.FAILED, e.getMessage()); }
+                    catch (Exception persistenceError) {
+                        context.getUi().displayError("任务状态未能落盘；保留上一个恢复点: " + persistenceError.getMessage());
+                    }
                     history.clear();
-                    saved.messages().forEach(m -> history.add(m.toChatMessage()));
+                    task.checkpoint().messages().forEach(m -> history.add(m.toChatMessage()));
                 }
-            } else if (resume) {
-                throw new IllegalStateException("任务持久化服务未启用");
-            }
-            pendingToolCalls.clear();
-            duplicateCallGuard.reset();   // 每轮用户对话重置重复调用记忆，跨轮的相同首调不误拦
-
-            // ── Hook: UserPromptSubmit（进入 LLM 前）—— BLOCK 则跳过本轮 ──
-            HookContext promptContext = HookContext.forUserPrompt(context, history,
-                    resume ? task.state().objective() : input);
-            HookResult promptResult = hookRegistry.fire(promptContext);
-            if (promptResult.isBlocked()) {
-                if (task != null) task.status(TaskStatus.WAITING_INPUT, "PROMPT_BLOCKED");
-                context.getUi().displayWarning(promptResult.message() != null
-                        ? promptResult.message() : "本轮输入已被 Hook 阻止。");
-                return;
-            }
-
-            // 后台子代理结论注入：在用户新输入之前插入，让模型先看到已完成任务的结论
-            if (!resume) injectCompletedBackgroundTasks();
-
-            String modelPrompt = promptContext.buildPromptForModel();
-            if (!resume) {
-                history.add(new ChatMessage("user", modelPrompt));
-                if (task != null) task.boundary(Phase.BEFORE_MODEL, history,
-                        task.checkpoint().iterations(), 0, false);
-            }
-            if (task != null && task.checkpoint().phase() != Phase.TOOLS) task.receiveResults(history);
-
-            // ── 记忆：本轮开始前 LLM 召回相关记忆；正文沿调用链请求局部传递（同 CancelToken 模式），
-            // 不落 ContextManager 共享字段，避免并行/后台回合互相串写 ──
-            MemoryService memory = context.getMemoryService();
-            String recalledMemories = memory != null ? memory.recall(history) : null;
-
-            // 原生 function calling：多轮 agentic 循环
-            RunOutcome outcome = runNativeToolLoop(token, recalledMemories, task, resume);
-            if (task != null) task.status(outcome.status(), outcome.reason());
-
-            // ── 记忆：按信号门控储存（省掉每轮空转的抽取调用），整理(dream)后台异步 ──
-            // 触发条件二选一：主模型在本轮输出过 <memory-signal/> 标记，或用户输入含明确的记忆诉求词。
-            // 被取消（stop）的回合不写记忆：半截对话不构成可靠记忆，dream 的整理阈值计数也不应前移。
-            // 计划模式回合同样不写：只读研究阶段产生的是过程性信息，不是沉淀下来的事实。
-            if (memory != null && !token.isCancelled()
-                    && !com.thoughtcoding.security.PlanMode.isActive()) {
-                boolean signaled = stripMemorySignal(history);
-                if (signaled || EXPLICIT_MEMORY_REQUEST.matcher(modelPrompt).find()) {
-                    memory.remember(history);
-                    memory.dreamAsync(false, msg -> context.getUi().displayInfo(msg));
+            } finally {
+                if (task != null) task.close();
+                if (sessionLease != null) sessionLease.close();
+                // 异常中断也要把流式残余上屏，避免残留片段混入下一回合输出
+                context.getUi().flushAssistantStream();
+                monitor.stop();
+                if (token.isCancelled()) {
+                    taskTrace.status("cancelled");
+                    mainTrace.metadata("status", "cancelled");
                 }
             }
-
-            if (task != null) {
-                var cp = task.checkpoint();
-                task.boundary(cp.phase(), history, cp.iterations(), cp.stopContinuations(), cp.completionNudge());
-            }
-            context.getSessionService().saveSession(sessionId, history);
-        } catch (Exception e) {
-            executionFailed = true;
-            context.getUi().displayError("Error processing input: " + e.getMessage());
-            if (task != null) {
-                try { task.status(TaskStatus.FAILED, e.getMessage()); }
-                catch (Exception persistenceError) {
-                    context.getUi().displayError("任务状态未能落盘；保留上一个恢复点: " + persistenceError.getMessage());
-                }
-                history.clear();
-                task.checkpoint().messages().forEach(m -> history.add(m.toChatMessage()));
-            }
-        } finally {
-            if (task != null) task.close();
-            if (sessionLease != null) sessionLease.close();
-            // 异常中断也要把流式残余上屏，避免残留片段混入下一回合输出
-            context.getUi().flushAssistantStream();
-            monitor.stop();
         }
     }
 
@@ -496,6 +522,8 @@ public class AgentLoop {
                 return new RunOutcome(TaskStatus.PAUSED, "AUTO_PROCESS_DISABLED");
             }
             if (++iter >= maxIter) {
+                Telemetry.taskStatus("iteration_limit");
+                Telemetry.currentStatus("iteration_limit");
                 history.add(new ChatMessage("system",
                         "已达到最大工具调用轮次(" + maxIter + ")，停止自动执行。"));
                 context.getUi().displayWarning("⚠️  已达最大工具轮次(" + maxIter + ")，停止自动执行。");

@@ -1,5 +1,7 @@
 package com.thoughtcoding.core;
 
+import com.thoughtcoding.observability.Telemetry;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.hook.DuplicateToolCallGuard;
 import com.thoughtcoding.hook.HookRegistry;
@@ -134,6 +136,7 @@ public class SubAgent {
                     history, total, 0, false);
         }
         if (task != null) task.status(com.thoughtcoding.task.TaskStatus.PAUSED, "ITERATION_LIMIT");
+        Telemetry.currentStatus("iteration_limit");
         return "SubAgent 已达到工具轮次上限，使用 /task resume 继续。";
     }
 

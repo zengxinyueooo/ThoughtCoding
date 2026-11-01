@@ -1,5 +1,7 @@
 package com.thoughtcoding.tool;
 
+import com.thoughtcoding.observability.Telemetry;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.core.CancelToken;
 import com.thoughtcoding.core.CancelledException;
@@ -103,11 +105,11 @@ public class ToolDispatcher {
         // 用 ExecutorService.submit（FutureTask）而非 CompletableFuture：
         // 后者的 cancel(true) 不会中断运行线程，取消语义是假的。
         Path workspace = Sandbox.workspaceRoot();
-        Future<ToolResult> future = toolExecutor.submit(() -> {
+        Future<ToolResult> future = toolExecutor.submit(Telemetry.wrap(() -> {
             try (Sandbox.WorkspaceScope ignored = Sandbox.enterWorkspace(workspace)) {
                 return tool.execute(argsJson, token, task, invocationId);
             }
-        });
+        }));
         if (token != null) {
             // 取消传播：用户 stop 时中断工具线程（对已完成的 future 是 no-op，回调残留无害）
             token.onCancel(() -> future.cancel(true));

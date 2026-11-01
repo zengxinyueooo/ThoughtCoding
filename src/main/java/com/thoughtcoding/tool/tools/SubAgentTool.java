@@ -1,5 +1,7 @@
 package com.thoughtcoding.tool.tools;
 
+import com.thoughtcoding.observability.Telemetry;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thoughtcoding.core.SubAgent;
 import com.thoughtcoding.core.ThoughtCodingContext;
@@ -120,7 +122,7 @@ public class SubAgentTool extends BaseTool {
                 // 由 SubAgentExecutor 统一管理生命周期与结论注入。
                 com.thoughtcoding.core.SubAgentExecutor.BackgroundTask task =
                         context.getSubAgentExecutor().startBackground(description,
-                                taskToken -> runSubAgent(prompt, description, taskToken));
+                                taskToken -> runSubAgent(prompt, description, taskToken, true));
                 return success("子Agent任务已启动（id: " + task.id() + "，标签: " + description
                                 + "），正在后台独立运行。完成后结论会自动注入下一轮对话，无需等待。"
                                 + "可继续处理其他任务。",
@@ -128,7 +130,7 @@ public class SubAgentTool extends BaseTool {
             }
 
             // 前台模式：阻塞至子代理得出结论。批内并行由 AgentLoop 通过 SubAgentExecutor 编排。
-            String conclusion = runSubAgent(prompt, description, token);
+            String conclusion = runSubAgent(prompt, description, token, false);
             return success(
                     conclusion == null || conclusion.isBlank()
                             ? "子Agent已结束，但未产出文本结论。" : conclusion,
@@ -144,7 +146,23 @@ public class SubAgentTool extends BaseTool {
     }
 
     private String runSubAgent(String prompt, String description,
-                               com.thoughtcoding.core.CancelToken token) {
+                               com.thoughtcoding.core.CancelToken token, boolean background) {
+        try (var trace = Telemetry.observation("agent.subagent", "agent", prompt);
+             var scope = trace.activate()) {
+            trace.metadata("label", description);
+            trace.metadata("subagent_id", java.util.UUID.randomUUID().toString());
+            trace.metadata("background", background);
+            try {
+                String result = runSubAgentInternal(prompt, description, token);
+                trace.output(result);
+                if (token != null && token.isCancelled()) trace.metadata("status", "cancelled");
+                return result;
+            } catch (RuntimeException error) { trace.error(error); throw error; }
+        }
+    }
+
+    private String runSubAgentInternal(String prompt, String description,
+                                      com.thoughtcoding.core.CancelToken token) {
         if (!context.getAppConfig().getAi().isSubagentWorktreeIsolation()) {
             return new SubAgent(context).run(prompt, description, token);
         }

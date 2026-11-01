@@ -1,5 +1,7 @@
 package com.thoughtcoding.core;
 
+import com.thoughtcoding.observability.Telemetry;
+
 import com.thoughtcoding.ui.ThoughtCodingUI;
 
 import java.util.ArrayList;
@@ -76,14 +78,14 @@ public class SubAgentExecutor {
      */
     public <T> Future<T> submitForeground(Callable<T> task) {
         var workspace = com.thoughtcoding.security.Sandbox.workspaceRoot();
-        return executor.submit(() -> {
+        return executor.submit(Telemetry.wrap(() -> {
             permits.acquire();
             try (var scope = com.thoughtcoding.security.Sandbox.enterWorkspace(workspace)) {
                 return task.call();
             } finally {
                 permits.release();
             }
-        });
+        }));
     }
 
     /**
@@ -106,7 +108,7 @@ public class SubAgentExecutor {
         if (tasks.putIfAbsent(id, t) != null) throw new IllegalStateException("子任务已在调度器中: " + id);
         var workspace = com.thoughtcoding.security.Sandbox.workspaceRoot();
 
-        Runnable backgroundTask = () -> {
+        var backgroundTrace = Telemetry.background(() -> {
             try {
                 permits.acquire();
             } catch (InterruptedException e) {
@@ -130,10 +132,10 @@ public class SubAgentExecutor {
             } finally {
                 permits.release();
             }
-        };
-        try { executor.submit(backgroundTask); }
+        });
+        try { executor.submit(backgroundTrace); }
         catch (RuntimeException error) {
-            tasks.remove(id); throw error;
+            backgroundTrace.close(); tasks.remove(id); throw error;
         }
         return t;
     }
