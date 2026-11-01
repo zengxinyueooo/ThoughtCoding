@@ -32,3 +32,4 @@ config.yaml
 
 # Durable task state is local to the workspace
 .thoughtcoding/tasks/
+.thoughtcoding/state.db*

@@ -37,7 +37,25 @@
 
 ## 存储与恢复协议
 
-数据位于 `.thoughtcoding/tasks/<taskId>/`，包含不可变 JSON 版本、原子替换的 HEAD 指针和运行锁。每次提交同时保存任务状态、消息、控制位置、工具日志、元数据和结果消费凭证。写入或版本冲突会停止后续执行；未被 HEAD 引用的残留写入不会成为最新恢复点。正常退出保留数据，历史版本暂不自动裁剪。
+任务与检查点现在保存在项目根目录的 `.thoughtcoding/state.db`（本地 SQLite）。不需要安装或启动数据库服务，JDBC 驱动随应用打包。主任务与隔离子任务共用原工作区的数据库，worktree 目录继续单独保存。数据库、WAL/SHM 辅助文件均不提交到 Git。
+
+`tasks` 保存可索引的任务状态、会话、父任务、最新版本及步骤信息；`checkpoints` 按 `(task_id, version)` 保存完整检查点 JSON，包括消息、控制位置、工具日志、元数据和结果消费凭证；`schema_migrations` 与 `PRAGMA user_version` 标识数据库结构版本。第一版仍保存完整快照，不做消息或工具日志的增量压缩，历史版本暂不自动裁剪。
+
+每次写入使用短事务：按期望版本更新任务状态，插入新检查点，再一起提交。任一步失败都回滚，内存只在提交成功后推进。唯一键和外键保护版本与最新指针；WAL 支持读取已提交快照，`synchronous=FULL` 保持提交持久性，写锁最多等待 5 秒后报错，不无限重试。模型请求和工具执行不持有数据库写事务。
+
+执行锁独立于数据库：`.thoughtcoding/tasks/<taskId>/run.lock` 仍保护整个任务运行，防止跨进程重复执行。worktree 的占用锁使用独立的 `TaskLeaseManager`，不创建额外数据库。
+
+### 从旧 JSON 存储迁移
+
+升级前退出该工作区的旧版 ThoughtCoding 进程；不支持新旧版本同时运行。首次打开新版本时自动扫描旧 `.thoughtcoding/tasks/`，持有旧任务与会话锁，校验 HEAD、任务归属和历史版本，然后在一个事务内导入所有任务。迁移期间不能获取执行锁时会停止并提示重试。损坏或无法判定归属的历史文件会阻止迁移，不静默丢弃。
+
+未被 HEAD 选中的最新同版本残留文件及比 HEAD 更新的孤立版本不导入。旧 JSON 文件全部保留；HEAD 先改为 `SQLITE-PENDING:<原文件名>`，数据库提交完成后改为 `SQLITE-MIGRATED:<原文件名>`。此标记让旧二进制拒绝继续写入已迁移任务，原 HEAD 文件名仍可追溯。
+
+中途崩溃后重新启动会继续迁移：事务提交前回滚并重试，提交后按迁移记录校验，不重复导入、不覆盖 SQLite 中的新版本。已完成迁移但数据库记录丢失时会明确报错，不能自动拿旧 JSON 覆盖新进度。旧目录是迁移前备份，不是迁移后的实时备份；不要通过手动重置 HEAD 降级。
+
+### 备份和部署边界
+
+数据库应放在本机磁盘，不用于多台机器共享的网络目录。最简单的备份方式是退出所有使用该工作区的进程，再复制 `.thoughtcoding/`；若存在 `state.db-wal`、`state.db-shm`，一并保留。运行中的在线备份需要 SQLite backup API 或支持它的工具，不能只复制正在写入的 `state.db`。数据库损坏或版本过高时程序会停止，不自动新建空状态替代。SQLite 自身的 WAL checkpoint 是日志维护，与 Agent 执行检查点不是同一概念。
 
 模型请求前、工具批次准备、工具开始、工具结果和回答结束均有持久化边界。恢复复用已保存的工具结果，继续剩余调用，不重复已有用户消息。模型调用失败保留请求前的位置；读取类操作中断可重试。
 
@@ -60,4 +78,6 @@
 
 ## 验证
 
-`TaskServiceTest`、`DurableRecoveryTest`、`WorktreeManagerTest` 覆盖跨 JVM 锁、部分批次恢复、不确定写操作、工作区漂移、孤立写入、持久化消费凭证、失败模型重试、检查点提交失败阻止工具执行及 worktree 复用。执行 `mvn test` 运行项目回归。
+`SqliteTaskStoreTest` 覆盖事务回滚、版本竞争、锁等待超时、迁移重试与核验、旧程序占用保护和独立 JVM 非正常退出后的恢复。`TaskServiceTest`、`DurableRecoveryTest`、`WorktreeManagerTest` 继续覆盖跨 JVM 执行锁、部分批次恢复、不确定写操作、工作区漂移、持久化消费凭证、失败模型重试、提交失败阻止工具执行及 worktree 复用。执行 `mvn test` 运行项目回归。
+
+实现参考：[SQLite JDBC](https://github.com/xerial/sqlite-jdbc)、[WAL](https://www.sqlite.org/wal.html)、[SQLite PRAGMA](https://www.sqlite.org/pragma.html)。
