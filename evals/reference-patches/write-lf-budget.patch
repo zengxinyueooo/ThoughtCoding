@@ -1,0 +1,10 @@
+--- a/src/main/java/com/thoughtcoding/tool/tools/WriteTool.java
++++ b/src/main/java/com/thoughtcoding/tool/tools/WriteTool.java
+@@ -48,6 +48,7 @@
+             if (c == null) {
+                 return error("write 需要 'content' 字段", System.currentTimeMillis() - startTime);
+             }
++            if (c instanceof String s && s.chars().filter(ch -> ch == 10).count() > 64) { return error("too many LF", System.currentTimeMillis() - startTime); }
+             String content = c.toString();
+ 
+             Path path = Sandbox.resolve(p.toString());

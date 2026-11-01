@@ -1,0 +1,15 @@
+{
+  "id": "registry-invalid",
+  "kind": "historical_bug",
+  "base_commit": "fe4e564be9f0e0ce852c92fae182391e3806624a",
+  "reference_commit": "03f61d90ade7f8ec2b1c1d968607edcc159d6832",
+  "prompt": "修复工具注册的输入校验：register(null) 不应抛异常；工具名为空字符串或全空白时不能注册；合法工具仍能注册，同名合法工具仍能刷新实例。保持既有公开接口，只修改 ToolRegistry.java。",
+  "allowed_paths": [
+    "src/main/java/com/thoughtcoding/tool/ToolRegistry.java"
+  ],
+  "acceptance_file": "RegistryAcceptanceTest.java",
+  "acceptance_class": "com.thoughtcoding.eval.RegistryAcceptanceTest",
+  "timeout_seconds": 900,
+  "repetitions": 3,
+  "split": "development"
+}

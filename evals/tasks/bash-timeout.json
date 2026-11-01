@@ -1,0 +1,17 @@
+{
+  "id": "bash-timeout",
+  "kind": "historical_bug",
+  "base_commit": "fe05ade9ae8b20a656b91b70db6c4e78fd0f3297",
+  "reference_commit": "9d99b9887d244b7df3ac937eec31bf50335f003c",
+  "prompt": "修复 bash 工具的超时失效：无输出的长命令也必须在 timeout 附近终止并返回失败；正常短命令仍返回完整输出。保持现有公开接口，只修改 BashTool.java。",
+  "allowed_paths": [
+    "src/main/java/com/thoughtcoding/tools/BashTool.java"
+  ],
+  "acceptance_file": "BashTimeoutAcceptanceTest.java",
+  "acceptance_class": "com.thoughtcoding.eval.BashTimeoutAcceptanceTest",
+  "timeout_seconds": 900,
+  "repetitions": 3,
+  "split": "development",
+  "reference_patch": "reference/bash-timeout.patch",
+  "reference_note": "历史参考提交包含不完整的包迁移，参考补丁仅移植超时修复并保留起始版本包名。"
+}

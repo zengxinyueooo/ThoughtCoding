@@ -1,0 +1,17 @@
+{
+  "id": "write-line-width",
+  "kind": "synthetic_unseen_requirement",
+  "base_commit": "2c2ac20f2942e98601c5a60bc0b423657a960ad8",
+  "prompt": "为 write 增加单行长度限制：按LF分行，CRLF中的CR属于行结束符不计长度，每行最多256个Java UTF-16字符，恰好256允许；任一行超过上限则失败且不能覆盖文件或创建父目录。内容不可改写；保留空文本、覆盖和正常建目录。只修改 WriteTool.java。",
+  "allowed_paths": [
+    "src/main/java/com/thoughtcoding/tool/tools/WriteTool.java"
+  ],
+  "acceptance_file": "WriteLineWidthTest.java",
+  "acceptance_class": "com.thoughtcoding.eval.WriteLineWidthTest",
+  "timeout_seconds": 900,
+  "repetitions": 2,
+  "split": "prospective_same_module_transfer",
+  "minimum_acceptance_tests": 3,
+  "reference_patch": "reference-patches/write-line-width.patch",
+  "provenance": "Agent-assisted synthetic requirement and test construction; calibrated with Java before first tested-Agent run; seen module, not cross-module generalization"
+}

@@ -1,0 +1,3 @@
+# Unified-diff fixtures contain significant context-line spaces.
+*.patch text eol=lf -whitespace
+*.sh text eol=lf

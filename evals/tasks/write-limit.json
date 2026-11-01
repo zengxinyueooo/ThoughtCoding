@@ -1,0 +1,15 @@
+{
+  "id": "write-limit",
+  "kind": "historical_feature",
+  "base_commit": "2c2ac20f2942e98601c5a60bc0b423657a960ad8",
+  "reference_commit": "67e92a5635551d22f05f5ddef86ba94dd6791e18",
+  "prompt": "为 write 增加单次 2,000,000 字符上限：超过上限应返回失败，不能覆盖原文件，也不能创建目标父目录；恰好等于上限应允许。保留小文件写入、自动创建父目录及公开接口。只修改 WriteTool.java。",
+  "allowed_paths": [
+    "src/main/java/com/thoughtcoding/tool/tools/WriteTool.java"
+  ],
+  "acceptance_file": "WriteLimitAcceptanceTest.java",
+  "acceptance_class": "com.thoughtcoding.eval.WriteLimitAcceptanceTest",
+  "timeout_seconds": 900,
+  "repetitions": 3,
+  "split": "development"
+}

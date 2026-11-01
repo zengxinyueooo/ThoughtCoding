@@ -1,0 +1,15 @@
+{
+  "id": "registry-owner",
+  "kind": "historical_feature",
+  "base_commit": "fe4e564be9f0e0ce852c92fae182391e3806624a",
+  "reference_commit": "03f61d90ade7f8ec2b1c1d968607edcc159d6832",
+  "prompt": "为 ToolRegistry 实现工具所有者生命周期隔离：保留 register(BaseTool)，其默认所有者为 application；增加 public boolean register(String owner, BaseTool tool)，同所有者允许刷新同名工具，不同所有者拒绝覆盖；增加 public String ownerOf(String toolName)、public int unregisterOwner(String owner)、public int unregisterOwnersWithPrefix(String prefix)、public int countOwnersWithPrefix(String prefix)、public int size()。删除与计数仅影响对应所有者，不影响其他工具；空所有者应拒绝。保持现有工具查询及规格接口。只修改 ToolRegistry.java。",
+  "allowed_paths": [
+    "src/main/java/com/thoughtcoding/tool/ToolRegistry.java"
+  ],
+  "acceptance_file": "RegistryOwnerAcceptanceTest.java",
+  "acceptance_class": "com.thoughtcoding.eval.RegistryOwnerAcceptanceTest",
+  "timeout_seconds": 900,
+  "repetitions": 3,
+  "split": "development"
+}

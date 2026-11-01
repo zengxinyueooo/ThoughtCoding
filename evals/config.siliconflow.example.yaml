@@ -1,0 +1,39 @@
+# 首轮内部评测配置。复制到项目根目录 config.yaml 后，在本地填写 API Key。
+# 模型与价格依据：https://www.siliconflow.cn/pricing （2026-09-12 查询）
+# 输入 0.70 元 / 百万 Token，输出 2.80 元 / 百万 Token；以服务方实际账单为准。
+models:
+  siliconflow-coder:
+    name: Qwen/Qwen3-Coder-30B-A3B-Instruct
+    baseURL: https://api.siliconflow.cn/v1
+    apiKey: REPLACE_WITH_YOUR_SILICONFLOW_API_KEY
+    streaming: true
+    maxTokens: 4096
+    temperature: 0.2
+
+defaultModel: siliconflow-coder
+
+ai:
+  autoProcessToolResults: true
+  maxToolIterations: 30
+  maxConcurrentSubagents: 1
+  subagentWorktreeIsolation: true
+  maxContextTokens: 48000
+  maxMessages: 50
+  snipKeepHead: 3
+  snipKeepTail: 20
+  keepRecentToolResults: 3
+  maxToolResultBytes: 200000
+  perResultPersistBytes: 30000
+  l4KeepTail: 6
+
+tools:
+  bash:
+    enabled: true
+  read:
+    enabled: true
+  write:
+    enabled: true
+  edit:
+    enabled: true
+  glob:
+    enabled: true

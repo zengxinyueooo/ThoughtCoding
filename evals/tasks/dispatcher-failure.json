@@ -1,0 +1,15 @@
+{
+  "id": "dispatcher-failure",
+  "kind": "historical_bug",
+  "base_commit": "2af27f237326959ea1422e430a07a877be7da42f",
+  "reference_commit": "1d78b270fe51085466a8b7b6032f24008d07abb3",
+  "prompt": "修复工具分发异常边界：工具抛出 RuntimeException 时返回包含原错误信息的失败 ToolResult，不能向外抛出；工具返回 null 时也应转为非空失败结果。保持正常调用结果和未知工具的失败行为，只修改 ToolDispatcher.java。",
+  "allowed_paths": [
+    "src/main/java/com/thoughtcoding/tool/ToolDispatcher.java"
+  ],
+  "acceptance_file": "DispatcherAcceptanceTest.java",
+  "acceptance_class": "com.thoughtcoding.eval.DispatcherAcceptanceTest",
+  "timeout_seconds": 900,
+  "repetitions": 3,
+  "split": "development"
+}

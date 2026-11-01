@@ -1,0 +1,15 @@
+{
+  "id": "session-latest",
+  "kind": "historical_bug",
+  "base_commit": "67e92a5635551d22f05f5ddef86ba94dd6791e18",
+  "reference_commit": "de98846e6c78af7d25f989f8cadf8c8759b0c46e",
+  "prompt": "修复 SessionService.getLatestSessionId()：必须根据磁盘会话 JSON 文件的最后修改时间返回最近会话，不能依赖随机 UUID、文件名字典序或集合迭代顺序。保留会话保存、加载、删除及公开接口。只修改 SessionService.java。",
+  "allowed_paths": [
+    "src/main/java/com/thoughtcoding/service/SessionService.java"
+  ],
+  "acceptance_file": "SessionLatestAcceptanceTest.java",
+  "acceptance_class": "com.thoughtcoding.eval.SessionLatestAcceptanceTest",
+  "timeout_seconds": 900,
+  "repetitions": 3,
+  "split": "development"
+}

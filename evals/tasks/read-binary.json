@@ -1,0 +1,15 @@
+{
+  "id": "read-binary",
+  "kind": "historical_bug",
+  "base_commit": "2c2ac20f2942e98601c5a60bc0b423657a960ad8",
+  "reference_commit": "67e92a5635551d22f05f5ddef86ba94dd6791e18",
+  "prompt": "修复 read 对二进制内容的识别：文件头部 8192 字节内包含 NUL 时拒绝当作文本读取，不依赖扩展名。保留 UTF-8 文本、空文本、offset/limit 分页与现有公开接口。只修改 ReadTool.java。",
+  "allowed_paths": [
+    "src/main/java/com/thoughtcoding/tool/tools/ReadTool.java"
+  ],
+  "acceptance_file": "ReadBinaryAcceptanceTest.java",
+  "acceptance_class": "com.thoughtcoding.eval.ReadBinaryAcceptanceTest",
+  "timeout_seconds": 900,
+  "repetitions": 3,
+  "split": "development"
+}

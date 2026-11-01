@@ -1,0 +1,10 @@
+--- a/src/main/java/com/thoughtcoding/tool/tools/WriteTool.java
++++ b/src/main/java/com/thoughtcoding/tool/tools/WriteTool.java
+@@ -48,6 +48,7 @@
+             if (c == null) {
+                 return error("write 需要 'content' 字段", System.currentTimeMillis() - startTime);
+             }
++            if (c instanceof String s && !java.nio.charset.StandardCharsets.UTF_8.newEncoder().canEncode(s)) { return error("unpaired surrogate", System.currentTimeMillis() - startTime); }
+             String content = c.toString();
+ 
+             Path path = Sandbox.resolve(p.toString());

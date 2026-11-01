@@ -1,0 +1,15 @@
+{
+  "id": "dispatcher-cancel",
+  "kind": "historical_bug",
+  "base_commit": "77fd528d7afeed6c0c34df533787dbde8739daec",
+  "reference_commit": "2c2ac20f2942e98601c5a60bc0b423657a960ad8",
+  "prompt": "修复 ToolDispatcher 的运行中取消：dispatch(call, token) 执行期间 token.cancel() 应及时中断工作线程并返回失败结果，不能等工具自行完成。保留 dispatch(call)、正常调用、未知工具、异常和空结果的原有行为。只修改 ToolDispatcher.java。",
+  "allowed_paths": [
+    "src/main/java/com/thoughtcoding/tool/ToolDispatcher.java"
+  ],
+  "acceptance_file": "DispatcherCancelAcceptanceTest.java",
+  "acceptance_class": "com.thoughtcoding.eval.DispatcherCancelAcceptanceTest",
+  "timeout_seconds": 900,
+  "repetitions": 3,
+  "split": "development"
+}

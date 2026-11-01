@@ -1,0 +1,17 @@
+{
+  "id": "write-valid-utf16",
+  "kind": "synthetic_unseen_requirement",
+  "base_commit": "2c2ac20f2942e98601c5a60bc0b423657a960ad8",
+  "prompt": "write 在任何文件系统副作用前校验文本中的UTF-16代理项：拒绝孤立高代理项和孤立低代理项，失败不覆盖文件、不创建父目录；合法emoji代理对、普通Unicode及空文本必须正常写入，保留覆盖和自动建目录。只修改 WriteTool.java。",
+  "allowed_paths": [
+    "src/main/java/com/thoughtcoding/tool/tools/WriteTool.java"
+  ],
+  "acceptance_file": "WriteValidUtf16Test.java",
+  "acceptance_class": "com.thoughtcoding.eval.WriteValidUtf16Test",
+  "timeout_seconds": 900,
+  "repetitions": 2,
+  "split": "prospective_same_module_transfer",
+  "minimum_acceptance_tests": 3,
+  "reference_patch": "reference-patches/write-valid-utf16.patch",
+  "provenance": "Agent-assisted synthetic requirement and test construction; calibrated with Java before first tested-Agent run; seen module, not cross-module generalization"
+}

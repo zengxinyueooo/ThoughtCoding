@@ -1,0 +1,17 @@
+{
+  "id": "write-string-type",
+  "kind": "synthetic_unseen_requirement",
+  "base_commit": "2c2ac20f2942e98601c5a60bc0b423657a960ad8",
+  "prompt": "write 的 content 必须是真正的 JSON 字符串，数字、布尔、数组和对象都要返回失败，且在失败前不能覆盖文件或创建父目录。保留空字符串、Unicode、正常覆盖写入及自动创建父目录，只修改 WriteTool.java。",
+  "allowed_paths": [
+    "src/main/java/com/thoughtcoding/tool/tools/WriteTool.java"
+  ],
+  "acceptance_file": "WriteStringTypeTest.java",
+  "acceptance_class": "com.thoughtcoding.eval.WriteStringTypeTest",
+  "timeout_seconds": 900,
+  "repetitions": 2,
+  "split": "prospective_same_module_transfer",
+  "minimum_acceptance_tests": 3,
+  "reference_patch": "reference-patches/write-string-type.patch",
+  "provenance": "Agent-assisted synthetic requirement and test construction; calibrated with Java before first tested-Agent run; seen module, not cross-module generalization"
+}

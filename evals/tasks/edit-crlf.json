@@ -1,0 +1,13 @@
+{
+  "id": "edit-crlf",
+  "kind": "historical_bug",
+  "base_commit": "de0b644a9a0b77da7a0c80e6655cb46562a0a7ac",
+  "reference_commit": "2f277398012682464c08f95249041b710e44b44d",
+  "prompt": "修复 edit 工具的跨平台多行匹配问题：当文件使用 Windows CRLF 换行，而 old_string 使用 LF 换行时，应能正确完成替换。允许将输出换行统一为 LF。保持普通 LF 文件替换、未匹配时不修改文件、多处匹配默认拒绝、replace_all 显式替换全部的行为。保持现有公开接口不变，只修改 EditTool.java。",
+  "allowed_paths": ["src/main/java/com/thoughtcoding/tools/file/EditTool.java"],
+  "acceptance_file": "EditCrlfAcceptanceTest.java",
+  "acceptance_class": "com.thoughtcoding.eval.EditCrlfAcceptanceTest",
+  "timeout_seconds": 900,
+  "repetitions": 3,
+  "split": "development"
+}

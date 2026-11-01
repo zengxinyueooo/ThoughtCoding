@@ -1,0 +1,16 @@
+--- a/src/main/java/com/thoughtcoding/tool/tools/WriteTool.java
++++ b/src/main/java/com/thoughtcoding/tool/tools/WriteTool.java
+@@ -48,11 +48,12 @@
+             if (c == null) {
+                 return error("write 需要 'content' 字段", System.currentTimeMillis() - startTime);
+             }
++            if (c instanceof String s && s.chars().anyMatch(ch -> ch < 32 && ch != 9 && ch != 10 && ch != 13)) { return error("forbidden control", System.currentTimeMillis() - startTime); }
+             String content = c.toString();
+ 
+             Path path = Sandbox.resolve(p.toString());
+             if (path.getParent() != null) {
+-                Files.createDirectories(path.getParent());
++                // Known bad: normal directory creation removed.
+             }
+             Files.writeString(path, content);
+ 

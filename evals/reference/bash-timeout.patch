@@ -1,0 +1,49 @@
+--- a/src/main/java/com/thoughtcoding/tools/BashTool.java
++++ b/src/main/java/com/thoughtcoding/tools/BashTool.java
+@@ -3,6 +3,7 @@
+ import com.fasterxml.jackson.databind.ObjectMapper;
+ import com.thoughtcoding.config.AppConfig;
+ import com.thoughtcoding.model.ToolResult;
++import com.thoughtcoding.tools.BaseTool;
+ import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
+ 
+ import java.io.BufferedReader;
+@@ -76,21 +77,31 @@
+ 
+             Process process = pb.start();
+ 
++            // 后台线程消费 stdout，避免主线程因 readLine 阻塞而无法触发超时
+             StringBuilder output = new StringBuilder();
+-            try (BufferedReader reader = new BufferedReader(
+-                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+-                String line;
+-                while ((line = reader.readLine()) != null) {
+-                    output.append(line).append("\n");
++            Thread readerThread = new Thread(() -> {
++                try (BufferedReader reader = new BufferedReader(
++                        new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
++                    String line;
++                    while ((line = reader.readLine()) != null) {
++                        output.append(line).append("\n");
++                    }
++                } catch (Exception ignored) {
++                    // 进程被 destroy 后流关闭，忽略
+                 }
+-            }
++            }, "bash-stdout-reader");
++            readerThread.start();
+ 
+             boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+             if (!finished) {
+                 process.destroyForcibly();
+-                return error("命令超时（>" + timeoutSeconds + "s），已被终止:\n" + output.toString().trim(),
++                readerThread.interrupt();
++                return error("命令超时（>" + timeoutSeconds + "s），已被终止",
+                         System.currentTimeMillis() - startTime);
+             }
++
++            // 进程已退出，等 reader 线程收完最后几行输出
++            readerThread.join(5000);
+ 
+             int exitCode = process.exitValue();
+             String result = output.toString().trim();

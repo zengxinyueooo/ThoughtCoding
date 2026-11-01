@@ -1,0 +1,15 @@
+{
+  "id": "glob-recursive",
+  "kind": "historical_bug",
+  "base_commit": "2f277398012682464c08f95249041b710e44b44d",
+  "reference_commit": "13b76eef6cf12b69eed588706a3d4756025d5631",
+  "prompt": "修复 glob 搜索：**/*.java 应同时匹配搜索目录根级和嵌套文件；跳过 node_modules 整个目录树；保留普通 *.java 匹配。保持公开接口和包名，只修改 GlobTool.java。",
+  "allowed_paths": [
+    "src/main/java/com/thoughtcoding/tools/search/GlobTool.java"
+  ],
+  "acceptance_file": "GlobAcceptanceTest.java",
+  "acceptance_class": "com.thoughtcoding.eval.GlobAcceptanceTest",
+  "timeout_seconds": 900,
+  "repetitions": 3,
+  "split": "development"
+}

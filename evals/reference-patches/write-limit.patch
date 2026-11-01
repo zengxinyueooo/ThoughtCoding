@@ -1,0 +1,12 @@
+--- a/src/main/java/com/thoughtcoding/tool/tools/WriteTool.java
++++ b/src/main/java/com/thoughtcoding/tool/tools/WriteTool.java
+@@ -49,6 +49,9 @@
+                 return error("write 需要 'content' 字段", System.currentTimeMillis() - startTime);
+             }
+             String content = c.toString();
++            if (content.length() > 2_000_000) {
++                return error("content too large", System.currentTimeMillis() - startTime);
++            }
+ 
+             Path path = Sandbox.resolve(p.toString());
+             if (path.getParent() != null) {

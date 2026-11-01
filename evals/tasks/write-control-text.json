@@ -1,0 +1,17 @@
+{
+  "id": "write-control-text",
+  "kind": "synthetic_unseen_requirement",
+  "base_commit": "2c2ac20f2942e98601c5a60bc0b423657a960ad8",
+  "prompt": "write 拒绝 U+0000至U+001F 的ASCII控制字符，但TAB、LF、CR三个例外必须允许；拒绝时不能覆盖文件或创建父目录。正常Unicode、emoji、空文本、覆盖和自动建目录必须保留，不转换内容。只修改 WriteTool.java。",
+  "allowed_paths": [
+    "src/main/java/com/thoughtcoding/tool/tools/WriteTool.java"
+  ],
+  "acceptance_file": "WriteControlTextTest.java",
+  "acceptance_class": "com.thoughtcoding.eval.WriteControlTextTest",
+  "timeout_seconds": 900,
+  "repetitions": 2,
+  "split": "prospective_same_module_transfer",
+  "minimum_acceptance_tests": 3,
+  "reference_patch": "reference-patches/write-control-text.patch",
+  "provenance": "Agent-assisted synthetic requirement and test construction; calibrated with Java before first tested-Agent run; seen module, not cross-module generalization"
+}

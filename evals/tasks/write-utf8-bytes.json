@@ -1,0 +1,16 @@
+{
+  "id": "write-utf8-bytes",
+  "kind": "synthetic_transfer_feature",
+  "base_commit": "2c2ac20f2942e98601c5a60bc0b423657a960ad8",
+  "prompt": "为 write 增加单次 UTF-8 编码后 4096 字节上限（不是 Java 字符数）：超过时返回失败，不覆盖已有文件，不创建父目录；恰好4096字节允许。保留空文本、小文件、自动创建父目录和公开接口。只修改 WriteTool.java。",
+  "allowed_paths": [
+    "src/main/java/com/thoughtcoding/tool/tools/WriteTool.java"
+  ],
+  "acceptance_file": "WriteUtf8BytesAcceptanceTest.java",
+  "acceptance_class": "com.thoughtcoding.eval.WriteUtf8BytesAcceptanceTest",
+  "timeout_seconds": 900,
+  "repetitions": 3,
+  "split": "prospective_transfer",
+  "minimum_acceptance_tests": 3,
+  "provenance": "Manually specified analogous task; frozen before first model run; same WriteTool family, not broad held-out benchmark"
+}
