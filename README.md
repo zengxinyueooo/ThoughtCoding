@@ -937,3 +937,24 @@ SessionData session = new SessionData("session-id", "标题", "model");
 
 **ThoughtCoding** **CLI** - 让 AI 编程助手更智能、更易用！ 🚀
 
+
+
+## 评测与执行观测
+
+评测入口为 `python evals/cli.py --help`，安装、校准和实验步骤见 [评测使用说明](evals/USAGE.md)。
+当前提供本仓库历史任务及新需求的离线评测，使用生产 Agent、独立 Java 验收和重复/A-B 运行。
+需要完整 Git 历史；不是面向任意仓库或任意模型的通用基准。
+
+生产执行可选通过 OpenTelemetry 导出任务、模型和工具轨迹到 Langfuse。
+环境变量模板见 [.env.example](.env.example)，真实密钥仅在本地配置。
+评测运行时先在本地持久化原始 Span，后续上传是独立步骤，不要求先拥有 Langfuse 账户。
+
+```powershell
+python -m pip install -r evals/requirements.txt
+python evals/cli.py doctor
+python evals/cli.py test
+python evals/cli.py build
+```
+
+以上命令不调用付费模型。校准、付费实验预算及可选上传方式请按使用说明执行。
+仓库不包含个人实验报告、原始请求响应、本地凭据或运行结果；公开代码本身不提供原 Langfuse 项目的访问权限。
