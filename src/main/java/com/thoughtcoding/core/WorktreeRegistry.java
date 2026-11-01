@@ -54,8 +54,8 @@ final class WorktreeRegistry {
         return repositoryStateRoot.resolve(taskId).toAbsolutePath().normalize();
     }
 
-    com.thoughtcoding.task.TaskStore.Lease executionLease(String taskId) {
-        return new com.thoughtcoding.task.TaskStore(repositoryStateRoot.resolve(".leases")).lock(taskId);
+    com.thoughtcoding.task.TaskLeaseManager.Lease executionLease(String taskId) {
+        return new com.thoughtcoding.task.TaskLeaseManager(repositoryStateRoot.resolve(".leases")).lock(taskId);
     }
 
     <T> T withLock(Callable<T> action) {

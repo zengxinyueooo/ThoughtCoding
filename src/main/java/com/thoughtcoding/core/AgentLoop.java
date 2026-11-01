@@ -188,7 +188,7 @@ public class AgentLoop {
         PerformanceMonitor monitor = context.getPerformanceMonitor();
         monitor.start();
         TaskService.Run task = null;
-        com.thoughtcoding.task.TaskStore.Lease sessionLease = null;
+        com.thoughtcoding.task.TaskLeaseManager.Lease sessionLease = null;
         try {
             TaskService tasks = context.getTaskService();
             if (tasks != null) {

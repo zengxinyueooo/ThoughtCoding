@@ -27,7 +27,7 @@ public final class TaskService {
 
     public TaskService(TaskStore store) { this.store = store; }
     public TaskStore store() { return store; }
-    public TaskStore.Lease lockSession(String sessionId) {
+    public TaskLeaseManager.Lease lockSession(String sessionId) {
         return store.lock("session-" + UUID.nameUUIDFromBytes(sessionId.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
     }
 
@@ -120,7 +120,7 @@ public final class TaskService {
     public void recoverInterrupted(String sessionId) {
         for (TaskState state : store.list(sessionId)) {
             if (state.status() != TaskStatus.RUNNING) continue;
-            TaskStore.Lease lease;
+            TaskLeaseManager.Lease lease;
             try { lease = store.lock(state.taskId()); }
             catch (IllegalStateException busy) { continue; }
             try (Run run = new Run(store.load(state.taskId()), lease)) {
@@ -194,9 +194,9 @@ public final class TaskService {
 
     public final class Run implements AutoCloseable {
         private ExecutionCheckpoint cp;
-        private final TaskStore.Lease lease;
+        private final TaskLeaseManager.Lease lease;
         private boolean closed;
-        private Run(ExecutionCheckpoint cp, TaskStore.Lease lease) { this.cp = cp; this.lease = lease; }
+        private Run(ExecutionCheckpoint cp, TaskLeaseManager.Lease lease) { this.cp = cp; this.lease = lease; }
         public synchronized ExecutionCheckpoint checkpoint() { return cp; }
         public synchronized TaskState state() { return cp.task(); }
 
